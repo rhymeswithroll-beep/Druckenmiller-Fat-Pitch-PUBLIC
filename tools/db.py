@@ -679,6 +679,43 @@ def init_db():
                         UNIQUE (date, symbol, scenario);
                 END IF;
             END $$""",
+            # Bulk fix: repair broken SERIAL id sequences for tables created by old SQLite DDL
+            *[f"""DO $$ BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='{t}' AND column_name='id' AND column_default IS NULL
+                ) THEN
+                    CREATE SEQUENCE IF NOT EXISTS {t}_id_seq;
+                    ALTER TABLE {t} ALTER COLUMN id SET DEFAULT nextval('{t}_id_seq');
+                    PERFORM setval('{t}_id_seq', COALESCE((SELECT MAX(id) FROM {t}), 0) + 1, false);
+                END IF;
+            END $$""" for t in (
+                'cot_energy_positions','eia_storage_surprise','entso_gas_flows',
+                'eu_gas_storage','journal_entries','lng_terminal_utilization',
+                'portfolio','thematic_ideas',
+            )],
+            # energy_regime: fix SERIAL id sequence if missing
+            """DO $$ BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='energy_regime' AND column_name='id'
+                    AND column_default IS NULL
+                ) THEN
+                    CREATE SEQUENCE IF NOT EXISTS energy_regime_id_seq;
+                    ALTER TABLE energy_regime ALTER COLUMN id SET DEFAULT nextval('energy_regime_id_seq');
+                    PERFORM setval('energy_regime_id_seq', COALESCE((SELECT MAX(id) FROM energy_regime), 0) + 1, false);
+                END IF;
+            END $$""",
+            # energy_regime: add UNIQUE on date for upsert_many
+            """DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname='energy_regime_date_key'
+                ) THEN
+                    ALTER TABLE energy_regime
+                        ADD CONSTRAINT energy_regime_date_key
+                        UNIQUE (date);
+                END IF;
+            END $$""",
         ]
 
         for stmt in statements:
