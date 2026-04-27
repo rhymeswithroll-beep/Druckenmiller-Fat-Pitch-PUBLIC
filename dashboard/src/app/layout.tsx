@@ -1,0 +1,32 @@
+import type { Metadata } from 'next';
+import { GeistSans } from 'geist/font/sans';
+import { GeistMono } from 'geist/font/mono';
+import './globals.css';
+import Sidebar from '@/components/Sidebar';
+import CommandPalette from '@/components/CommandPalette';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+
+export const metadata: Metadata = {
+  title: 'DAS | Druckenmiller Alpha System',
+  description: 'Institutional-grade quantitative equity intelligence platform. 900+ stock coverage universe with multi-source convergence signals, macro regime analysis, and adaptive weight optimization.',
+  keywords: 'quantitative intelligence, convergence signals, equity research, macro regime, institutional analytics',
+  robots: 'noindex, nofollow',
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+      <body className="bg-gray-50 text-gray-700 antialiased">
+        <CommandPalette />
+        <div className="flex h-screen overflow-hidden">
+          <Sidebar />
+          <main className="flex-1 overflow-y-auto bg-gray-50">
+            <div className="p-4 md:p-6 max-w-[1600px] mx-auto">
+              <ErrorBoundary>{children}</ErrorBoundary>
+            </div>
+          </main>
+        </div>
+      </body>
+    </html>
+  );
+}

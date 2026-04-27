@@ -1,0 +1,258 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { api } from '@/lib/api';
+import type { DossierSummary, DossierEvidence, DossierRisks, DevilsAdvocateKiller } from '@/lib/api';
+import ModuleHeatstrip from '@/components/shared/ModuleHeatstrip';
+import { fg, cs } from '@/lib/styles';
+import { scoreColor } from '@/lib/modules';
+
+interface Props {
+  symbol: string;
+}
+
+function Section({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen ?? false);
+  return (
+    <div className="border-b border-gray-100 last:border-0">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-0 py-3 text-left">
+        <span className="text-[10px] text-gray-500 tracking-widest uppercase font-semibold">{title}</span>
+        <span className="text-[10px] text-gray-300">{open ? '\u25B4' : '\u25BE'}</span>
+      </button>
+      {open && <div className="pb-4">{children}</div>}
+    </div>
+  );
+}
+
+export default function Dossier({ symbol }: Props) {
+  const [data, setData] = useState<DossierSummary | null>(null);
+  const [evidence, setEvidence] = useState<DossierEvidence | null>(null);
+  const [risks, setRisks] = useState<DossierRisks | null>(null);
+  const [fundamentals, setFundamentals] = useState<Record<string, number> | null>(null);
+  const [catalysts, setCatalysts] = useState<any>(null);
+
+  useEffect(() => {
+    api.dossier(symbol).then(setData);
+  }, [symbol]);
+
+  const loadEvidence = () => { if (!evidence) api.dossierEvidence(symbol).then(setEvidence); };
+  const loadRisks = () => { if (!risks) api.dossierRisks(symbol).then(setRisks); };
+  const loadFundamentals = () => { if (!fundamentals) api.dossierFundamentals(symbol).then(setFundamentals); };
+  const loadCatalysts = () => { if (!catalysts) api.dossierCatalysts(symbol).then(setCatalysts); };
+
+  if (!data) return <div className="text-gray-400 text-sm text-center py-8">Loading dossier...</div>;
+
+  const conv = data.convergence;
+  const sig = data.signal;
+  const prices = data.prices || [];
+
+  return (
+    <div className="space-y-2">
+      {/* Header */}
+      <div className="flex items-center gap-4 pb-3 border-b border-gray-200">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <div className="text-xl font-bold text-gray-900">{symbol}</div>
+            {data.signal?.asset_class && data.signal.asset_class !== 'stock' && (
+              <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 tracking-wider">{data.signal.asset_class}</span>
+            )}
+          </div>
+          <div className="text-xs text-gray-500 truncate">{data.meta?.name}{data.meta?.sector ? ` | ${data.meta.sector}` : ''}</div>
+        </div>
+        {/* Mini sparkline */}
+        {prices.length >= 2 && (() => {
+          const closes = prices.map((p: any) => p.close);
+          const mn = Math.min(...closes), mx = Math.max(...closes);
+          const range = mx - mn || 1;
+          const W = 80, H = 28;
+          const pts = closes.map((c: number, i: number) =>
+            `${(i / (closes.length - 1)) * W},${H - ((c - mn) / range) * H}`
+          ).join(' ');
+          const last = closes[closes.length - 1], first = closes[0];
+          const up = last >= first;
+          return (
+            <svg width={W} height={H} className="shrink-0">
+              <polyline points={pts} fill="none" stroke={up ? '#059669' : '#e11d48'} strokeWidth="1.5" strokeLinejoin="round" />
+            </svg>
+          );
+        })()}
+        {(data.best_score != null || conv) && (
+          <div className="ml-auto flex items-center gap-4 shrink-0">
+            <div className="text-center">
+              <div className="text-2xl font-bold" {...fg(scoreColor(data.best_score ?? conv?.convergence_score))}>
+                {(data.best_score ?? conv?.convergence_score)?.toFixed(0)}
+              </div>
+              <div className="text-[8px] text-gray-400 uppercase tracking-widest">Score</div>
+            </div>
+            <div className="text-center">
+              <div className="text-sm font-bold text-gray-700">{data.effective_conviction ?? conv?.conviction_level}</div>
+              <div className="text-[8px] text-gray-400 uppercase tracking-widest">Conviction</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Thesis */}
+      <Section title="Thesis" defaultOpen>
+        <div className="text-xs text-gray-700 leading-relaxed">{data.thesis}</div>
+      </Section>
+
+      {/* Trade Setup */}
+      {sig && (
+        <Section title="Trade Setup" defaultOpen>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { label: 'Signal', value: sig.signal, color: sig.signal?.includes('BUY') ? '#059669' : sig.signal?.includes('SELL') ? '#e11d48' : '#6b7280' },
+              { label: 'Entry', value: `$${sig.entry_price?.toFixed(2)}` },
+              { label: 'Stop', value: `$${sig.stop_loss?.toFixed(2)}`, color: '#e11d48' },
+              { label: 'Target', value: `$${sig.target_price?.toFixed(2)}`, color: '#059669' },
+              { label: 'R:R', value: sig.rr_ratio?.toFixed(1) },
+              { label: 'Size ($)', value: sig.position_size_dollars ? `$${(sig.position_size_dollars / 1000).toFixed(0)}k` : '\u2014' },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="bg-gray-50 rounded-lg p-2.5">
+                <div className="text-[8px] text-gray-400 uppercase tracking-widest">{label}</div>
+                <div className="text-sm font-mono font-bold" {...fg(color || '#1f2937')}>{value || '\u2014'}</div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Evidence */}
+      <Section title="Evidence">
+        <div onFocus={loadEvidence} onMouseEnter={loadEvidence}>
+          {evidence ? (
+            <div className="space-y-3">
+              <ModuleHeatstrip scores={evidence.modules} />
+              {evidence.top_contributors.slice(0, 7).map((tc, i) => (
+                <div key={i} className="flex items-start gap-2 text-[11px]">
+                  <span className="shrink-0 w-8 text-right font-mono font-bold" {...fg(scoreColor(tc.score))}>{tc.score.toFixed(0)}</span>
+                  <span className="text-gray-600 font-medium uppercase text-[10px] w-20 shrink-0">{tc.module.replace(/_/g, ' ')}</span>
+                  <span className="text-gray-500 text-[10px]">{tc.detail || 'Active'}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <button onClick={loadEvidence} className="text-[10px] text-emerald-600 hover:underline">Load evidence</button>
+          )}
+        </div>
+      </Section>
+
+      {/* Risks */}
+      <Section title="Risks">
+        <div onMouseEnter={loadRisks}>
+          {risks ? (
+            <div className="space-y-2">
+              {risks.devils_advocate && (() => {
+                const da = risks.devils_advocate;
+                const killers: DevilsAdvocateKiller[] = (() => {
+                  if (!da.killers) return [];
+                  try { return typeof da.killers === 'string' ? JSON.parse(da.killers) : da.killers; }
+                  catch { return []; }
+                })();
+                return (
+                  <div className="bg-rose-50 border border-rose-100 rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-[10px] text-rose-600 font-semibold uppercase tracking-wider">Bear Thesis</div>
+                      {da.risk_score != null && (
+                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded"
+                          style={{ background: da.risk_score >= 75 ? '#fecaca' : '#fde68a', color: da.risk_score >= 75 ? '#991b1b' : '#92400e' }}>
+                          risk {da.risk_score}/100
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-rose-800 leading-relaxed">{da.bear_thesis}</div>
+                    {da.kill_scenario && (
+                      <div className="text-[10px] text-rose-600 border-t border-rose-100 pt-2">
+                        <span className="font-semibold">Kill trigger: </span>{da.kill_scenario}
+                      </div>
+                    )}
+                    {killers.length > 0 && (
+                      <div className="border-t border-rose-100 pt-2 space-y-1.5">
+                        <div className="text-[9px] text-rose-400 uppercase tracking-widest font-semibold">Munger Killers</div>
+                        {killers.map((k, i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <span className="text-[9px] font-mono text-rose-700 w-5 shrink-0">{k.score}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[10px] text-rose-800 truncate">{k.name}</div>
+                              <div className="flex gap-1 mt-0.5">
+                                <div className="flex items-center gap-0.5">
+                                  <span className="text-[8px] text-rose-400 w-8">prob</span>
+                                  <div className="w-16 h-1 bg-rose-100 rounded-full overflow-hidden">
+                                    <div className="h-full bg-rose-400 rounded-full" style={{ width: `${k.probability}%` }} />
+                                  </div>
+                                  <span className="text-[8px] text-rose-500 font-mono">{k.probability}%</span>
+                                </div>
+                                <div className="flex items-center gap-0.5">
+                                  <span className="text-[8px] text-rose-400 w-8">impact</span>
+                                  <div className="w-16 h-1 bg-rose-100 rounded-full overflow-hidden">
+                                    <div className="h-full bg-rose-600 rounded-full" style={{ width: `${k.impact}%` }} />
+                                  </div>
+                                  <span className="text-[8px] text-rose-500 font-mono">{k.impact}%</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+              {risks.conflicts.map((c: any, i: number) => (
+                <div key={i} className="text-[10px] text-amber-700 bg-amber-50 rounded px-2 py-1">{c.conflict_type}: {c.description}</div>
+              ))}
+              {risks.forensic.map((f: any, i: number) => (
+                <div key={i} className="text-[10px] text-rose-700 bg-rose-50 rounded px-2 py-1">{f.alert_type} ({f.severity})</div>
+              ))}
+            </div>
+          ) : (
+            <button onClick={loadRisks} className="text-[10px] text-emerald-600 hover:underline">Load risks</button>
+          )}
+        </div>
+      </Section>
+
+      {/* Fundamentals */}
+      <Section title="Fundamentals">
+        <div onMouseEnter={loadFundamentals}>
+          {fundamentals ? (
+            <div className="grid grid-cols-3 gap-2">
+              {Object.entries(fundamentals).slice(0, 12).map(([k, v]) => (
+                <div key={k} className="bg-gray-50 rounded p-2">
+                  <div className="text-[8px] text-gray-400 uppercase tracking-wider truncate">{k}</div>
+                  <div className="text-xs font-mono text-gray-700">{typeof v === 'number' ? v.toFixed(2) : v}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <button onClick={loadFundamentals} className="text-[10px] text-emerald-600 hover:underline">Load fundamentals</button>
+          )}
+        </div>
+      </Section>
+
+      {/* Catalysts */}
+      <Section title="Catalysts">
+        <div onMouseEnter={loadCatalysts}>
+          {catalysts ? (
+            <div className="space-y-2">
+              {catalysts.earnings?.map((e: any, i: number) => (
+                <div key={i} className="text-[10px] text-gray-700 bg-gray-50 rounded px-2 py-1">Earnings {e.date}: est {e.estimate} | actual {e.actual}</div>
+              ))}
+              {catalysts.rumors?.map((r: any, i: number) => (
+                <div key={i} className="text-[10px] text-amber-700 bg-amber-50 rounded px-2 py-1">M&A: {r.headline} ({r.deal_stage})</div>
+              ))}
+              {catalysts.insider?.map((ins: any, i: number) => (
+                <div key={i} className="text-[10px] text-gray-700 bg-gray-50 rounded px-2 py-1">Insider: score {ins.insider_score} {ins.narrative || ''}</div>
+              ))}
+              {catalysts.regulatory?.map((r: any, i: number) => (
+                <div key={i} className="text-[10px] text-gray-700 bg-gray-50 rounded px-2 py-1">Regulatory: score {r.reg_score}</div>
+              ))}
+            </div>
+          ) : (
+            <button onClick={loadCatalysts} className="text-[10px] text-emerald-600 hover:underline">Load catalysts</button>
+          )}
+        </div>
+      </Section>
+    </div>
+  );
+}

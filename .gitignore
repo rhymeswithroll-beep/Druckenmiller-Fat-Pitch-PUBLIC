@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+venv/
+venv 2/
+__pycache__/
+*.pyc
+
+# Build
+.next/
+.tmp/
+
+# Secrets & credentials
+.env
+.env.*
+!.env.template
+**/.*env*local*
+credentials.json
+token.json
+
+# OS
+.DS_Store
+
+# Logs
+SESSIONS_LOG.md
+
+# Claude Code internals
+.claude/
+
+# Database files (DB lives in .tmp/ but guard against strays)
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# Build artifacts
+rebuild/
+dashboard/.next/
