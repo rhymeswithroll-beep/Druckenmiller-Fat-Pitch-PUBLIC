@@ -134,8 +134,16 @@ def main():
     print("=" * 60)
 
     # ── Phase 0: Database initialization ──
-    from tools.db import init_db
+    from tools.db import init_db, sync_local_from_neon
     _run_phase("Phase 0: Database Init", init_db)
+
+    # Sync any LOCAL_TABLES data from Neon that may have been written there
+    # if yesterday's pipeline ran before the LOCAL_TABLES routing was in place.
+    print("  Checking LOCAL_TABLES freshness vs Neon...")
+    try:
+        sync_local_from_neon()
+    except Exception as _e:
+        print(f"  [sync] Non-fatal: {_e}")
 
     # ── Phase 1: Data Ingestion ──
     from tools.fetch_stock_universe import run as fetch_universe

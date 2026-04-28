@@ -902,6 +902,100 @@ def init_db():
         _release(conn)
 
 
+def sync_local_from_neon(force: bool = False):
+    """Sync LOCAL_TABLES data from Neon to SQLite when SQLite is stale.
+
+    Called at pipeline start to handle the case where yesterday's pipeline wrote
+    to Neon (before LOCAL_TABLES routing was active) and SQLite is behind.
+    Only syncs tables where Neon has more-recent data than SQLite.
+    """
+    import sqlite3 as _sq3
+    from datetime import date as _date
+
+    today = _date.today().isoformat()
+    sq = _sq3.connect(_SQLITE_PATH, timeout=60)
+
+    # --- price_data ---
+    try:
+        sq_max = sq.execute("SELECT MAX(date) FROM price_data").fetchone()[0]
+        if force or (sq_max is None or sq_max < today):
+            pg = get_conn()
+            with pg.cursor() as cur:
+                cutoff = sq_max if sq_max else (str(_date.today().replace(month=1, day=1)))
+                cur.execute(
+                    "SELECT symbol, date, open, high, low, close, volume, asset_class "
+                    "FROM price_data WHERE date > %s ORDER BY date",
+                    [cutoff],
+                )
+                rows = cur.fetchall()
+            _release(pg)
+            if rows:
+                sq.executemany(
+                    "INSERT OR REPLACE INTO price_data "
+                    "(symbol, date, open, high, low, close, volume, asset_class) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    rows,
+                )
+                sq.commit()
+                print(f"  [sync] price_data: pulled {len(rows)} rows from Neon (Neon>{sq_max})")
+    except Exception as e:
+        print(f"  [sync] price_data sync skipped: {e}")
+
+    # --- macro_indicators ---
+    try:
+        sq_max = sq.execute("SELECT MAX(date) FROM macro_indicators").fetchone()[0]
+        if force or (sq_max is None or sq_max < today):
+            pg = get_conn()
+            with pg.cursor() as cur:
+                cur.execute(
+                    "SELECT indicator_id, date, value FROM macro_indicators "
+                    "WHERE date > %s ORDER BY date",
+                    [sq_max or "2020-01-01"],
+                )
+                rows = cur.fetchall()
+            _release(pg)
+            if rows:
+                sq.executemany(
+                    "INSERT OR REPLACE INTO macro_indicators (indicator_id, date, value) VALUES (?,?,?)",
+                    rows,
+                )
+                sq.commit()
+                print(f"  [sync] macro_indicators: pulled {len(rows)} rows from Neon")
+    except Exception as e:
+        print(f"  [sync] macro_indicators sync skipped: {e}")
+
+    # --- insider_signals ---
+    try:
+        sq_max = sq.execute("SELECT MAX(date) FROM insider_signals").fetchone()[0]
+        if force or (sq_max is None or sq_max < today):
+            pg = get_conn()
+            with pg.cursor() as cur:
+                cur.execute(
+                    "SELECT symbol, date, insider_score, cluster_buy, cluster_count, "
+                    "large_buys_count, total_buy_value_30d, total_sell_value_30d, "
+                    "unusual_volume_flag, top_buyer, narrative "
+                    "FROM insider_signals WHERE date > %s",
+                    [sq_max or "2020-01-01"],
+                )
+                rows = cur.fetchall()
+            _release(pg)
+            if rows:
+                sq.executemany(
+                    "INSERT OR REPLACE INTO insider_signals "
+                    "(symbol, date, insider_score, cluster_buy, cluster_count, "
+                    "large_buys_count, total_buy_value_30d, total_sell_value_30d, "
+                    "unusual_volume_flag, top_buyer, narrative) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    rows,
+                )
+                sq.commit()
+                print(f"  [sync] insider_signals: pulled {len(rows)} rows from Neon")
+    except Exception as e:
+        print(f"  [sync] insider_signals sync skipped: {e}")
+
+    sq.close()
+
+
 
 def _to_pg(sql):
     """Convert SQLite SQL to Postgres-compatible SQL."""

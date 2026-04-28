@@ -18,11 +18,29 @@ def get_client():
     return finnhub.Client(api_key=FINNHUB_API_KEY)
 
 
+def _vader_sentiment(texts):
+    """Run VADER on a list of text strings; return avg compound score [-1, 1]."""
+    try:
+        from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+        sia = SentimentIntensityAnalyzer()
+        scores = [sia.polarity_scores(t)["compound"] for t in texts if t]
+        return sum(scores) / len(scores) if scores else 0.0
+    except ImportError:
+        return 0.0
+
+
 def fetch_news_sentiment(client, symbols):
-    """Fetch company news sentiment scores from Finnhub."""
+    """Fetch company news sentiment scores from Finnhub.
+
+    Uses the premium /news-sentiment endpoint if available; falls back to
+    running VADER on /company-news headlines (free tier compatible).
+    """
     rows = []
     today = datetime.now().strftime("%Y-%m-%d")
     week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    # Probe whether premium news_sentiment is available
+    _premium_available = None
 
     for i, symbol in enumerate(symbols):
         try:
@@ -30,19 +48,39 @@ def fetch_news_sentiment(client, symbols):
             if not news:
                 continue
 
-            # Finnhub sentiment is provided via the buzz endpoint
-            sentiment = client.news_sentiment(symbol)
-            if sentiment and "sentiment" in sentiment:
-                s = sentiment["sentiment"]
-                buzz = sentiment.get("buzz", {})
-                rows.append((
-                    symbol, today,
-                    float(s.get("bearishPercent", 0)),
-                    float(s.get("bullishPercent", 0)),
-                    float(buzz.get("buzz", 0)),
-                    float(buzz.get("articlesInLastWeek", 0)),
-                    len(news),
-                ))
+            # Try premium endpoint first; cache availability after first probe
+            bull_pct = bear_pct = buzz_score = 0.0
+            nonlocal_premium = _premium_available
+
+            if nonlocal_premium is not False:
+                try:
+                    sentiment = client.news_sentiment(symbol)
+                    if sentiment and "sentiment" in sentiment:
+                        s = sentiment["sentiment"]
+                        buz = sentiment.get("buzz", {})
+                        bull_pct = float(s.get("bullishPercent", 0))
+                        bear_pct = float(s.get("bearishPercent", 0))
+                        buzz_score = float(buz.get("buzz", 0))
+                        _premium_available = True
+                    else:
+                        _premium_available = False
+                except Exception:
+                    _premium_available = False
+
+            # Free-tier fallback: VADER on headlines
+            if not _premium_available or nonlocal_premium is False:
+                headlines = [a.get("headline", "") for a in news[:20]]
+                compound = _vader_sentiment(headlines)
+                bull_pct = max(0.0, compound)
+                bear_pct = max(0.0, -compound)
+                buzz_score = min(len(news) / 10.0, 1.0)
+
+            rows.append((
+                symbol, today,
+                bear_pct, bull_pct, buzz_score,
+                float(len(news)),
+                len(news),
+            ))
         except Exception:
             pass
 

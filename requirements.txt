@@ -21,3 +21,4 @@ nltk>=3.8.0
 psycopg2-binary>=2.9
 sqlalchemy>=2.0
 anthropic>=0.40.0
+vaderSentiment>=3.3.2
