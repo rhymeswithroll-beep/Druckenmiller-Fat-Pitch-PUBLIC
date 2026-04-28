@@ -162,7 +162,7 @@ def _aggregate_signals(today, all_activities):
     inv_rows = [(a.get("exec_name"), a.get("exec_org"), a.get("exec_prominence"), a.get("activity_type","unknown"),
         a.get("target_company","unknown"), a.get("target_ticker"), a.get("target_sector"), a.get("investment_amount"),
         a.get("funding_round"), 1 if a.get("is_public") else 0, 1 if a.get("ipo_expected") else 0,
-        a.get("ipo_timeline"), a.get("date_reported"), a.get("confidence"), a.get("summary"),
+        a.get("ipo_timeline"), a.get("date_reported") or today, a.get("confidence"), a.get("summary"),
         a.get("source_url"), a.get("source"), a.get("raw_score"), today) for a in scored]
     upsert_many("ai_exec_investments", ["exec_name","exec_org","exec_prominence","activity_type","target_company",
         "target_ticker","target_sector","investment_amount","funding_round","is_public","ipo_expected",
