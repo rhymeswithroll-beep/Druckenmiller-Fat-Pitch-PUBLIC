@@ -6,7 +6,7 @@ plus fuzzy matching via Gemini for unknown company names found in articles.
 
 import json
 import logging
-from tools.db import get_conn, query
+from tools.db import upsert_many, query
 
 logger = logging.getLogger(__name__)
 
@@ -109,14 +109,11 @@ _STATIC_MAP = [
 
 def init_ticker_map():
     """Populate the foreign_ticker_map table with static ADR mappings."""
-    with get_conn() as conn:
-        conn.executemany(
-            """INSERT OR REPLACE INTO foreign_ticker_map
-               (local_ticker, adr_ticker, company_name_local,
-                company_name_english, market, sector, in_universe)
-               VALUES (?, ?, ?, ?, ?, ?, 1)""",
-            _STATIC_MAP,
-        )
+    rows = [(*r, 1) for r in _STATIC_MAP]
+    upsert_many("foreign_ticker_map",
+                ["local_ticker", "adr_ticker", "company_name_local",
+                 "company_name_english", "market", "sector", "in_universe"],
+                rows)
     logger.info(f"Loaded {len(_STATIC_MAP)} foreign ticker mappings.")
 
 

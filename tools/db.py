@@ -34,6 +34,7 @@ LOCAL_TABLES = frozenset({
     "earnings_calendar",    # Pipeline-internal lookup only
     "insider_transactions", # 14K+ rows, upserted fresh every run — Neon killer
     "insider_signals",      # Module-internal output, read back by same module
+    "foreign_ticker_map",   # Static ~80-row ADR map; Neon pooler intermittently loses DDL
 })
 
 
@@ -81,6 +82,11 @@ def _init_local_db():
                 total_buy_value_30d REAL, total_sell_value_30d REAL,
                 unusual_volume_flag INTEGER, top_buyer TEXT, narrative TEXT,
                 PRIMARY KEY (symbol, date)
+            );
+            CREATE TABLE IF NOT EXISTS foreign_ticker_map (
+                local_ticker TEXT PRIMARY KEY, adr_ticker TEXT,
+                company_name_local TEXT, company_name_english TEXT,
+                market TEXT, sector TEXT, in_universe INTEGER DEFAULT 1
             );
         """)
         conn.commit()
@@ -584,6 +590,7 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS ma_rumors (symbol TEXT, date TEXT, source TEXT, headline TEXT, credibility REAL, deal_stage TEXT, details TEXT, PRIMARY KEY (symbol, date, source))""",
             """CREATE TABLE IF NOT EXISTS insider_transactions (symbol TEXT, date TEXT, insider_name TEXT, title TEXT, transaction_type TEXT, shares REAL, value REAL, PRIMARY KEY (symbol, date, insider_name, transaction_type))""",
             """CREATE TABLE IF NOT EXISTS insider_signals (symbol TEXT, date TEXT, insider_score REAL, cluster_buy INTEGER, cluster_count INTEGER, large_csuite INTEGER, unusual_volume INTEGER, total_buy_value_30d REAL, details TEXT, PRIMARY KEY (symbol, date))""",
+            """CREATE TABLE IF NOT EXISTS foreign_ticker_map (local_ticker TEXT, adr_ticker TEXT, company_name_local TEXT, company_name_english TEXT, market TEXT, sector TEXT, in_universe INTEGER DEFAULT 1, PRIMARY KEY (local_ticker))""",
             """CREATE TABLE IF NOT EXISTS economic_dashboard (indicator_id TEXT, date TEXT, category TEXT, name TEXT, value REAL, prev_value REAL, mom_change REAL, yoy_change REAL, zscore REAL, trend TEXT, signal TEXT, last_updated TEXT, PRIMARY KEY (indicator_id, date))""",
             """CREATE TABLE IF NOT EXISTS economic_heat_index (date TEXT PRIMARY KEY, heat_index REAL, improving_count INTEGER, deteriorating_count INTEGER, stable_count INTEGER, leading_count INTEGER, detail TEXT)""",
             """CREATE TABLE IF NOT EXISTS hl_price_snapshots (ticker TEXT, timestamp TEXT, mid_price REAL, deployer TEXT, PRIMARY KEY (ticker, timestamp, deployer))""",
