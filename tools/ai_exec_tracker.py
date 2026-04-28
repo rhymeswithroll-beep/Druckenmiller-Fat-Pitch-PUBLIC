@@ -6,9 +6,10 @@ from collections import defaultdict
 _project_root = str(Path(__file__).parent.parent)
 if _project_root not in sys.path: sys.path.insert(0, _project_root)
 import requests
-from tools.config import (SERPER_API_KEY, FIRECRAWL_API_KEY, GEMINI_API_KEY, GEMINI_BASE, GEMINI_MODEL,
+import anthropic
+from tools.config import (SERPER_API_KEY, FIRECRAWL_API_KEY, ANTHROPIC_API_KEY, CLAUDE_MODEL,
     EDGAR_HEADERS, AI_EXEC_WATCHLIST, AI_EXEC_SERPER_QUERIES_PER_EXEC,
-    AI_EXEC_MAX_URLS_PER_EXEC, AI_EXEC_FIRECRAWL_DELAY, AI_EXEC_GEMINI_DELAY,
+    AI_EXEC_MAX_URLS_PER_EXEC, AI_EXEC_FIRECRAWL_DELAY,
     AI_EXEC_MIN_CONFIDENCE, AI_EXEC_MIN_SCORE_STORE, AI_EXEC_SM_BOOST_HIGH, AI_EXEC_SM_BOOST_MED,
     AI_EXEC_CONVERGENCE_BONUS, AI_EXEC_LOOKBACK_DAYS, AI_EXEC_SCAN_INTERVAL_DAYS)
 from tools.db import init_db, upsert_many, query, get_conn, serper_cache_get, serper_cache_set
@@ -54,21 +55,32 @@ def _firecrawl_scrape(url):
     except Exception: pass
     return None
 
-def _classify_with_gemini(text, title, exec_name, exec_role, exec_org):
-    if not GEMINI_API_KEY: return [], [], None
-    prompt = f"""Financial analyst tracking AI exec investments.\nExec: {exec_name} ({exec_role} at {exec_org})\nTitle: {title}\nText:\n{text[:4000]}\n\nExtract PERSONAL investment/board activity as JSON:\n{{"activities": [{{"activity_type": "angel_investment"|"vc_investment"|"board_appointment"|"advisory_role"|"equity_grant"|"personal_purchase"|"fund_raise", "target_company": "name", "target_ticker": "ticker or null", "target_sector": "sector", "investment_amount": null, "funding_round": null, "is_public": bool, "ipo_expected": bool, "ipo_timeline": null, "date_reported": "YYYY-MM-DD or null", "confidence": 1-10, "summary": "one sentence"}}], "mentioned_public_tickers": [], "sector_signal": null}}\nOnly PERSONAL investments. Respond ONLY with valid JSON."""
+def _classify_with_claude(text, title, exec_name, exec_role, exec_org):
+    if not ANTHROPIC_API_KEY: return [], [], None
+    prompt = f"""Financial analyst tracking AI exec investments.
+Exec: {exec_name} ({exec_role} at {exec_org})
+Title: {title}
+Text:
+{text[:4000]}
+
+Extract PERSONAL investment/board activity as JSON:
+{{"activities": [{{"activity_type": "angel_investment"|"vc_investment"|"board_appointment"|"advisory_role"|"equity_grant"|"personal_purchase"|"fund_raise", "target_company": "name", "target_ticker": "ticker or null", "target_sector": "sector", "investment_amount": null, "funding_round": null, "is_public": bool, "ipo_expected": bool, "ipo_timeline": null, "date_reported": "YYYY-MM-DD or null", "confidence": 1-10, "summary": "one sentence"}}], "mentioned_public_tickers": [], "sector_signal": null}}
+Only PERSONAL investments. Respond ONLY with valid JSON."""
     try:
-        resp = requests.post(f"{GEMINI_BASE}/models/{GEMINI_MODEL}:generateContent",
-            headers={"Content-Type": "application/json"}, params={"key": GEMINI_API_KEY},
-            json={"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024}}, timeout=30)
-        resp.raise_for_status()
-        raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model=CLAUDE_MODEL, max_tokens=1024, temperature=0.1,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.content[0].text.strip()
         raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
         raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE)
+        match = re.search(r'\{.*\}', raw, flags=re.DOTALL)
+        if match: raw = match.group(0)
         result = json.loads(raw)
         return result.get("activities", []), result.get("mentioned_public_tickers", []), result.get("sector_signal")
     except Exception as e:
-        print(f"  Warning: Gemini classification failed: {e}"); return [], [], None
+        print(f"  Warning: Claude classification failed: {e}"); return [], [], None
 
 def _search_edgar_form_d(exec_name):
     try:
@@ -117,8 +129,7 @@ def _scrape_and_classify(search_results, exec_info):
         text = _firecrawl_scrape(url)
         if text: _cache_url(url, "ok"); time.sleep(AI_EXEC_FIRECRAWL_DELAY)
         else: text = f"{result['title']}\n{result['snippet']}"; _cache_url(url, "snippet_only")
-        activities, tickers, sector = _classify_with_gemini(text, result["title"], exec_info["name"], exec_info["role"], exec_info["org"])
-        time.sleep(AI_EXEC_GEMINI_DELAY)
+        activities, tickers, sector = _classify_with_claude(text, result["title"], exec_info["name"], exec_info["role"], exec_info["org"])
         for act in activities:
             act.update({"exec_name": exec_info["name"], "exec_org": exec_info["org"],
                 "exec_prominence": exec_info["prominence"], "source_url": url, "source": result.get("title","")[:200]})
