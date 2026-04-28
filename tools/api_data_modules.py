@@ -24,11 +24,11 @@ def heat_index():
 
 # ── INSIDER TRADING ──
 @router.get("/api/insider-trading")
-def insider_signals(min_score: int = 0, days: int = 30):
+def insider_signals(min_score: int = 0, days: int = 90):
     return query("SELECT * FROM insider_signals WHERE date >= date('now', ? || ' days') AND insider_score >= ? ORDER BY insider_score DESC", [f"-{days}", min_score])
 
 @router.get("/api/insider-trading/cluster-buys")
-def insider_cluster_buys(days: int = 30):
+def insider_cluster_buys(days: int = 90):
     return query("SELECT * FROM insider_signals WHERE date >= date('now', ? || ' days') AND cluster_buy = 1 ORDER BY insider_score DESC", [f"-{days}"])
 
 @router.get("/api/insider-trading/{symbol}")
