@@ -442,7 +442,7 @@ TABLE_PKS: dict[str, list[str]] = {
     "regulatory_events":           ["event_id", "date"],
     "consensus_blindspot_signals": ["symbol", "date"],
     "ai_exec_signals":             ["symbol", "date"],
-    "ai_exec_investments":         ["symbol", "date", "investment_type"],
+    "ai_exec_investments":         ["exec_name", "target_company", "date_reported"],
     "ai_exec_url_cache":           ["url"],
     "energy_intel_signals":        ["symbol", "date"],
     "energy_eia_enhanced":         ["series_id", "date"],
@@ -540,7 +540,8 @@ def init_db():
         cur.execute("SELECT pg_advisory_xact_lock(42424242)")
 
         # Drop tables whose schemas were wrong in early builds so CREATE recreates them correctly.
-        for tbl in ["foreign_ticker_map", "foreign_intel_signals", "alternative_data"]:
+        for tbl in ["foreign_ticker_map", "foreign_intel_signals", "alternative_data",
+                    "ai_exec_investments"]:
             cur.execute(f"DROP TABLE IF EXISTS {tbl}")
         conn.commit()
 
