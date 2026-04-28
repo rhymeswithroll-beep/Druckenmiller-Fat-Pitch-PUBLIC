@@ -35,6 +35,10 @@ from datetime import datetime, date
 
 logger = logging.getLogger(__name__)
 
+# Suppress yfinance's noisy internal logging (404s for crypto/futures symbols,
+# 401 crumb rotation). Real failures still surface via exceptions → _run_phase.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
 # Expected max duration per phase (seconds). Exceeded = SLA warning.
 _PHASE_SLA = {
     "Phase 1.2: Price Data": 120,
