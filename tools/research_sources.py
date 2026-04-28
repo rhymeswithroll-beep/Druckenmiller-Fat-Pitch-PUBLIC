@@ -36,7 +36,7 @@ from tools.config import (
     SERPER_API_KEY, FIRECRAWL_API_KEY, GEMINI_API_KEY, GEMINI_BASE, GEMINI_MODEL,
     RESEARCH_SOURCES, RESEARCH_MIN_SCRAPE_CHARS, RESEARCH_SNIPPET_FALLBACK,
 )
-from tools.db import init_db, upsert_many, query, get_conn
+from tools.db import init_db, upsert_many, query, get_conn, serper_cache_get, serper_cache_set
 
 
 # ── Constants ──────────────────────────────────────────────────────────
@@ -64,7 +64,11 @@ ALL_THEMES = [
 # ── Serper + Firecrawl (same pattern as founder_letter_analyzer.py) ────
 
 def _serper_search(query_str: str, num_results: int = MAX_URLS_PER_SOURCE) -> list[dict]:
-    """Search using Serper API, return list of {title, link, snippet, date}."""
+    """Search using Serper API, return list of {title, link, snippet, date}.
+    Results are cached per-day in SQLite — same query never hits Serper twice in one day."""
+    cached = serper_cache_get(query_str)
+    if cached is not None:
+        return cached
     if not SERPER_API_KEY:
         print("  Warning: SERPER_API_KEY not configured")
         return []
@@ -85,6 +89,7 @@ def _serper_search(query_str: str, num_results: int = MAX_URLS_PER_SOURCE) -> li
                 "snippet": item.get("snippet", ""),
                 "date": item.get("date", ""),
             })
+        serper_cache_set(query_str, results)
         return results
     except Exception as e:
         print(f"  Warning: Serper search failed: {e}")

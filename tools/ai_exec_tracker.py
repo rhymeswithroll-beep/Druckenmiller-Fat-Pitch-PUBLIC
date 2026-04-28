@@ -11,7 +11,7 @@ from tools.config import (SERPER_API_KEY, FIRECRAWL_API_KEY, GEMINI_API_KEY, GEM
     AI_EXEC_MAX_URLS_PER_EXEC, AI_EXEC_FIRECRAWL_DELAY, AI_EXEC_GEMINI_DELAY,
     AI_EXEC_MIN_CONFIDENCE, AI_EXEC_MIN_SCORE_STORE, AI_EXEC_SM_BOOST_HIGH, AI_EXEC_SM_BOOST_MED,
     AI_EXEC_CONVERGENCE_BONUS, AI_EXEC_LOOKBACK_DAYS, AI_EXEC_SCAN_INTERVAL_DAYS)
-from tools.db import init_db, upsert_many, query, get_conn
+from tools.db import init_db, upsert_many, query, get_conn, serper_cache_get, serper_cache_set
 
 logger = logging.getLogger(__name__)
 SERPER_URL = "https://google.serper.dev/search"
@@ -28,12 +28,17 @@ def _cache_url(url, status):
     upsert_many("ai_exec_url_cache", ["url", "scraped_at", "status"], [(url, date.today().isoformat(), status)])
 
 def _serper_search(query_str, num_results=5):
+    cached = serper_cache_get(query_str)
+    if cached is not None:
+        return cached
     if not SERPER_API_KEY: return []
     try:
         resp = requests.post(SERPER_URL, headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
             json={"q": query_str, "num": num_results}, timeout=15)
         resp.raise_for_status()
-        return [{"title": i.get("title",""), "link": i.get("link",""), "snippet": i.get("snippet",""), "date": i.get("date","")} for i in resp.json().get("organic", [])]
+        results = [{"title": i.get("title",""), "link": i.get("link",""), "snippet": i.get("snippet",""), "date": i.get("date","")} for i in resp.json().get("organic", [])]
+        serper_cache_set(query_str, results)
+        return results
     except Exception as e:
         print(f"  Warning: Serper search failed: {e}"); return []
 

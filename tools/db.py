@@ -122,6 +122,41 @@ def _sqlite_upsert(table: str, columns: list, rows: list):
         conn.close()
 
 
+def serper_cache_get(query: str) -> list | None:
+    """Return cached Serper results for query if run today, else None."""
+    import json as _json
+    conn = _get_sqlite()
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS serper_search_cache (
+            query TEXT, date TEXT, results TEXT, PRIMARY KEY (query, date))""")
+        conn.commit()
+        today = __import__('datetime').date.today().isoformat()
+        row = conn.execute(
+            "SELECT results FROM serper_search_cache WHERE query=? AND date=?",
+            (query, today)
+        ).fetchone()
+        return _json.loads(row[0]) if row else None
+    finally:
+        conn.close()
+
+
+def serper_cache_set(query: str, results: list):
+    """Cache Serper results for query for today."""
+    import json as _json
+    conn = _get_sqlite()
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS serper_search_cache (
+            query TEXT, date TEXT, results TEXT, PRIMARY KEY (query, date))""")
+        today = __import__('datetime').date.today().isoformat()
+        conn.execute(
+            "INSERT OR REPLACE INTO serper_search_cache (query, date, results) VALUES (?,?,?)",
+            (query, today, _json.dumps(results))
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _sqlite_execute(sql, params=None):
     """Run a single DML statement against the local SQLite DB."""
     conn = _get_sqlite()
