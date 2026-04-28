@@ -32,8 +32,10 @@ if _project_root not in sys.path:
 
 import requests
 
+import anthropic
+
 from tools.config import (
-    SERPER_API_KEY, FIRECRAWL_API_KEY, GEMINI_API_KEY, GEMINI_BASE, GEMINI_MODEL,
+    SERPER_API_KEY, FIRECRAWL_API_KEY, ANTHROPIC_API_KEY, CLAUDE_MODEL,
     RESEARCH_SOURCES, RESEARCH_MIN_SCRAPE_CHARS, RESEARCH_SNIPPET_FALLBACK,
 )
 from tools.db import init_db, upsert_many, query, get_conn, serper_cache_get, serper_cache_set
@@ -142,33 +144,24 @@ def _cache_url(url: str, status: str):
     )
 
 
-def _analyze_with_gemini(
+def _analyze_with_claude(
     text: str,
     title: str,
     source: str,
     relevance_tickers: list[str],
     is_snippet_only: bool = False,
 ) -> dict:
-    """
-    Use Gemini Flash to extract investment signals from article text.
-    Returns dict with tickers (symbol + sentiment), themes, summary.
-    """
-    if not GEMINI_API_KEY:
-        return {"tickers": [], "themes": [], "summary": title[:200]}
+    """Use Claude Haiku to extract investment signals from article text."""
+    if not ANTHROPIC_API_KEY:
+        return {"tickers": [], "themes": [], "bullish_for": [], "bearish_for": [], "summary": title[:200], "relevance_score": 30}
 
     ticker_list = ", ".join(relevance_tickers) if relevance_tickers else "none specified"
     themes_list = ", ".join(ALL_THEMES)
-
     snippet_note = ""
     if is_snippet_only:
-        snippet_note = """
-NOTE: Only the article title and snippet are available (full text behind paywall).
-Base your analysis on whatever signal you can extract from these fragments.
-Lower your relevance_score by 20 points to reflect reduced confidence.
-If there is not enough information for meaningful analysis, set relevance_score to 0."""
+        snippet_note = "\nNOTE: Only title/snippet available (paywall). Lower relevance_score by 20. Set to 0 if insufficient signal."
 
-    prompt = f"""You are an institutional investment analyst. Analyze this article and extract investment signals.
-{snippet_note}
+    prompt = f"""You are an institutional investment analyst. Analyze this article and extract investment signals.{snippet_note}
 
 Source: {source}
 Title: {title}
@@ -177,46 +170,33 @@ Article text:
 {text[:4000]}
 
 Extract the following as JSON:
-1. "tickers": array of objects with "symbol" (from this list: {ticker_list}) and "sentiment" (+1 = bullish, -1 = bearish, 0 = neutral). Only include tickers explicitly discussed.
-2. "themes": array of applicable themes from: {themes_list}. Maximum 4 themes.
-3. "bullish_for": array of ticker symbols with clearly positive investment implications
-4. "bearish_for": array of ticker symbols with clearly negative investment implications
-5. "summary": 2-sentence investor summary. Be specific about magnitude and mechanism.
-6. "relevance_score": 0-100 score for investment relevance (100 = critical market-moving insight, 50 = useful context, 0 = not actionable)
+1. "tickers": array of objects with "symbol" (from this list: {ticker_list}) and "sentiment" (+1 bullish, -1 bearish, 0 neutral). Only tickers explicitly discussed.
+2. "themes": array of applicable themes from: {themes_list}. Maximum 4.
+3. "bullish_for": array of ticker symbols with positive investment implications
+4. "bearish_for": array of ticker symbols with negative investment implications
+5. "summary": 2-sentence investor summary with specific magnitude and mechanism.
+6. "relevance_score": 0-100 (100=critical market-moving, 50=useful context, 0=not actionable)
 
 Respond ONLY with valid JSON. No markdown, no explanation."""
 
-    _fallback = {"tickers": [], "themes": [], "bullish_for": [], "bearish_for": [], "summary": title[:200], "relevance_score": 30}
-    for _attempt in range(3):
-        try:
-            resp = requests.post(
-                f"{GEMINI_BASE}/models/{GEMINI_MODEL}:generateContent",
-                headers={"Content-Type": "application/json"},
-                params={"key": GEMINI_API_KEY},
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024},
-                },
-                timeout=30,
-            )
-            if resp.status_code == 429:
-                wait = 35 * (2 ** _attempt)
-                print(f"  Gemini rate limit — waiting {wait}s (attempt {_attempt+1}/3)...")
-                time.sleep(wait)
-                continue
-            resp.raise_for_status()
-            data = resp.json()
-            raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
-            raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE)
-            return json.loads(raw)
-        except Exception as e:
-            print(f"  Warning: Gemini analysis failed: {e}")
-            if _attempt < 2:
-                time.sleep(10)
-                continue
-            return _fallback
-    return _fallback
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=1024,
+            temperature=0.1,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.content[0].text.strip()
+        raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
+        raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE)
+        match = re.search(r'\{.*\}', raw, flags=re.DOTALL)
+        if match:
+            raw = match.group(0)
+        return json.loads(raw)
+    except Exception as e:
+        print(f"  Warning: Claude analysis failed: {e}")
+        return {"tickers": [], "themes": [], "bullish_for": [], "bearish_for": [], "summary": title[:200], "relevance_score": 30}
 
 
 def run():
@@ -270,7 +250,7 @@ def run():
                     continue
 
             # Step 3: Analyze with Gemini
-            analysis = _analyze_with_gemini(text, title, source_name, relevance_tickers, is_snippet_only)
+            analysis = _analyze_with_claude(text, title, source_name, relevance_tickers, is_snippet_only)
 
             # Step 4: Store
             tickers_data = analysis.get("tickers", [])
