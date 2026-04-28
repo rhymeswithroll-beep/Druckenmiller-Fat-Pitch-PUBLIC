@@ -30,47 +30,90 @@ def terminal_feed():
     breadth = query("SELECT * FROM market_breadth ORDER BY date DESC LIMIT 1")
     breadth_data = breadth[0] if breadth else {}
 
-    # 3. Sector rotation — ALL 11 sectors ranked by avg signal score + bull/bear sentiment
-    sectors = query("""
-        SELECT u.sector,
-               COUNT(*) as stock_count,
-               ROUND(AVG(s.composite_score)::numeric, 1) as avg_score,
-               SUM(CASE WHEN s.signal LIKE '%BUY%' THEN 1 ELSE 0 END) as bull_count,
-               SUM(CASE WHEN s.signal LIKE '%SELL%' THEN 1 ELSE 0 END) as bear_count,
-               SUM(CASE WHEN s.signal = 'NEUTRAL' THEN 1 ELSE 0 END) as neutral_count,
-               MAX(s.composite_score) as top_score
-        FROM signals s
-        JOIN stock_universe u ON s.symbol = u.symbol
-        WHERE s.date = (SELECT MAX(date) FROM signals)
-        AND u.sector IS NOT NULL
-        GROUP BY u.sector
-        ORDER BY avg_score DESC
-    """)
+    # 3. Sector rotation — Python-side join across SQLite (stock_universe) + Neon (signals)
+    sectors = []
+    try:
+        # Get latest signals from Neon
+        sig_rows = query("""
+            SELECT symbol, composite_score, signal
+            FROM signals
+            WHERE date = (SELECT MAX(date) FROM signals)
+        """)
+        # Get sector map from SQLite (stock_universe is a LOCAL_TABLE)
+        universe_rows = query("SELECT symbol, sector FROM stock_universe WHERE sector IS NOT NULL")
+        sector_map = {r["symbol"]: r["sector"] for r in universe_rows}
+        # Aggregate in Python
+        from collections import defaultdict
+        agg: dict = defaultdict(lambda: {"scores": [], "bull": 0, "bear": 0, "neutral": 0})
+        for s in sig_rows:
+            sec = sector_map.get(s["symbol"])
+            if not sec:
+                continue
+            agg[sec]["scores"].append(s["composite_score"] or 0)
+            sig = s["signal"] or ""
+            if "BUY" in sig:
+                agg[sec]["bull"] += 1
+            elif "SELL" in sig:
+                agg[sec]["bear"] += 1
+            else:
+                agg[sec]["neutral"] += 1
+        for sec, d in agg.items():
+            scores = d["scores"]
+            if not scores:
+                continue
+            sectors.append({
+                "sector": sec,
+                "stock_count": len(scores),
+                "avg_score": round(sum(scores) / len(scores), 1),
+                "bull_count": d["bull"],
+                "bear_count": d["bear"],
+                "neutral_count": d["neutral"],
+                "top_score": max(scores),
+            })
+        sectors.sort(key=lambda x: x["avg_score"], reverse=True)
+    except Exception as e:
+        logger.warning("Sector rotation failed: %s", e)
 
-    # 4. Biggest price movers across the ENTIRE universe (+ convergence score overlay)
-    movers = query("""
-        WITH latest_dates AS (
+    # 4. Biggest price movers — SQLite-compatible query, Python-side convergence overlay
+    movers = []
+    try:
+        # Get two most recent dates with meaningful data (SQLite syntax, no ::numeric)
+        date_rows = query("""
             SELECT date FROM (
                 SELECT date, COUNT(*) as n FROM price_data GROUP BY date
             ) sub WHERE n > 100 ORDER BY date DESC LIMIT 2
-        ),
-        today AS (SELECT MAX(date) as d FROM latest_dates),
-        prev AS (SELECT MIN(date) as d FROM latest_dates)
-        SELECT p.symbol, p.close,
-               ROUND(((p.close - pp.close) / NULLIF(pp.close, 0) * 100)::numeric, 1) as delta,
-               u.name, u.sector,
-               cs.convergence_score, cs.conviction_level
-        FROM price_data p
-        JOIN price_data pp ON p.symbol = pp.symbol AND pp.date = (SELECT d FROM prev)
-        LEFT JOIN stock_universe u ON p.symbol = u.symbol
-        LEFT JOIN convergence_signals cs ON p.symbol = cs.symbol
-            AND cs.date = (SELECT MAX(date) FROM convergence_signals)
-        WHERE p.date = (SELECT d FROM today)
-        AND pp.close > 0
-        AND ABS((p.close - pp.close) / NULLIF(pp.close, 0) * 100) > 3
-        ORDER BY (p.close - pp.close) / NULLIF(pp.close, 0) DESC
-        LIMIT 20
-    """)
+        """)
+        if len(date_rows) >= 2:
+            today_d = date_rows[0]["date"]
+            prev_d  = date_rows[1]["date"]
+            raw_movers = query("""
+                SELECT p.symbol, p.close,
+                       ROUND((p.close - pp.close) / pp.close * 100, 1) as delta,
+                       u.name, u.sector
+                FROM price_data p
+                JOIN price_data pp ON p.symbol = pp.symbol AND pp.date = ?
+                LEFT JOIN stock_universe u ON p.symbol = u.symbol
+                WHERE p.date = ? AND pp.close > 0
+                AND ABS((p.close - pp.close) / pp.close * 100) > 3
+                ORDER BY (p.close - pp.close) / pp.close DESC
+                LIMIT 20
+            """, [prev_d, today_d])
+            # Overlay convergence scores from Neon
+            conv_rows = query("""
+                SELECT symbol, convergence_score, conviction_level
+                FROM convergence_signals
+                WHERE date = (SELECT MAX(date) FROM convergence_signals)
+            """)
+            conv_map = {r["symbol"]: r for r in conv_rows}
+            for m in raw_movers:
+                sym = m["symbol"]
+                conv = conv_map.get(sym, {})
+                movers.append({**m,
+                    "convergence_score": conv.get("convergence_score"),
+                    "conviction_level": conv.get("conviction_level"),
+                })
+    except Exception as e:
+        logger.warning("Score movers failed: %s", e)
 
     # 5. Strongest catalysts across the ENTIRE universe (not filtered to our picks)
     catalysts = query("""
@@ -88,28 +131,36 @@ def terminal_feed():
     # 6. Insider intelligence — aggregated signals across the ENTIRE universe
     insider_flow = []
     try:
-        insider_flow = query("""
+        # insider_signals is a LOCAL_TABLE (SQLite) — use SQLite date syntax
+        ins_rows = query("""
             SELECT ins.symbol, ins.insider_score, ins.cluster_buy, ins.cluster_count,
-                   ins.unusual_volume as unusual_volume_flag, ins.total_buy_value_30d,
+                   ins.unusual_volume_flag, ins.total_buy_value_30d,
                    0 as total_sell_value_30d,
-                   ins.details as narrative, NULL as top_buyer, ins.large_csuite as large_buys_count,
-                   u.name as company_name, u.sector
+                   ins.narrative, ins.top_buyer, ins.large_buys_count
             FROM insider_signals ins
-            LEFT JOIN stock_universe u ON ins.symbol = u.symbol
-            WHERE ins.date::date >= CURRENT_DATE - INTERVAL '30 days'
+            WHERE ins.date >= date('now', '-30 days')
             AND ins.insider_score >= 25
             AND ins.insider_score = (
                 SELECT MAX(i2.insider_score) FROM insider_signals i2
-                WHERE i2.symbol = ins.symbol AND i2.date::date >= CURRENT_DATE - INTERVAL '30 days'
+                WHERE i2.symbol = ins.symbol AND i2.date >= date('now', '-30 days')
             )
             ORDER BY ins.insider_score DESC
             LIMIT 40
         """)
+        # Overlay company name + sector from stock_universe (also SQLite)
+        universe_rows = query("SELECT symbol, name, sector FROM stock_universe")
+        univ_map = {r["symbol"]: r for r in universe_rows}
+        for row in ins_rows:
+            u = univ_map.get(row["symbol"], {})
+            insider_flow.append({**row,
+                "company_name": u.get("name"),
+                "sector": u.get("sector"),
+            })
     except Exception as e:
         logger.warning("insider_signals query failed, falling back to transactions: %s", e)
-        # Fallback: aggregate from individual transactions if insider_signals missing
         try:
-            insider_flow = query("""
+            # Fallback from insider_transactions (also SQLite) — SQLite-compatible syntax
+            it_rows = query("""
                 SELECT it.symbol,
                        COUNT(*) as cluster_count,
                        SUM(CASE WHEN it.transaction_type IN ('P','BUY') THEN 1 ELSE 0 END) as cluster_buy,
@@ -119,16 +170,22 @@ def terminal_feed():
                        NULL as narrative,
                        MAX(it.insider_name) as top_buyer,
                        0 as large_buys_count,
-                       u.name as company_name, u.sector,
                        COUNT(*) * 10 as insider_score
                 FROM insider_transactions it
-                LEFT JOIN stock_universe u ON it.symbol = u.symbol
-                WHERE it.date::date >= CURRENT_DATE - INTERVAL '30 days'
+                WHERE it.date >= date('now', '-30 days')
                 GROUP BY it.symbol
                 HAVING SUM(CASE WHEN it.transaction_type IN ('P','BUY') THEN COALESCE(it.value,0) ELSE 0 END) >= 100000
                 ORDER BY total_buy_value_30d DESC
                 LIMIT 40
             """)
+            universe_rows = query("SELECT symbol, name, sector FROM stock_universe")
+            univ_map = {r["symbol"]: r for r in universe_rows}
+            for row in it_rows:
+                u = univ_map.get(row["symbol"], {})
+                insider_flow.append({**row,
+                    "company_name": u.get("name"),
+                    "sector": u.get("sector"),
+                })
         except Exception as e2:
             logger.warning("insider_transactions fallback also failed: %s", e2)
 
