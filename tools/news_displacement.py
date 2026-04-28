@@ -76,11 +76,11 @@ RULES: Only genuinely material news. Be specific on magnitude. Skip noise. Retur
         raw = response.content[0].text.strip()
         raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
         raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE)
-        # Extract just the JSON array — strip any trailing commentary after the closing ]
-        match = re.search(r'\[.*\]', raw, flags=re.DOTALL)
-        if match:
-            raw = match.group(0)
-        analyses = json.loads(raw)
+        # Find the start of the JSON array and decode just that — ignores trailing text/extra arrays
+        start = raw.find('[')
+        if start == -1:
+            return []
+        analyses, _ = json.JSONDecoder().raw_decode(raw, start)
         return analyses if isinstance(analyses, list) else [analyses]
     except Exception as e:
         print(f"  Warning: Claude analysis failed: {e}"); return []
