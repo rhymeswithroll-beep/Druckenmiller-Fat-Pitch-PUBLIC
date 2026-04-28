@@ -6,7 +6,8 @@ from pathlib import Path
 _project_root = str(Path(__file__).parent.parent)
 if _project_root not in sys.path: sys.path.insert(0, _project_root)
 import requests
-from tools.config import (EIA_API_KEY, SERPER_API_KEY, GEMINI_API_KEY, GEMINI_BASE, GEMINI_MODEL,
+import anthropic
+from tools.config import (EIA_API_KEY, SERPER_API_KEY, ANTHROPIC_API_KEY, CLAUDE_MODEL,
     ENERGY_EIA_ENHANCED_SERIES, ENERGY_SEASONAL_LOOKBACK_YEARS, ENERGY_JODI_COUNTRIES,
     ENERGY_JODI_MAX_LAG_DAYS, ENERGY_COMTRADE_REFRESH_DAYS)
 from tools.db import init_db, get_conn, query, upsert_many
@@ -79,8 +80,8 @@ def _jodi_is_fresh():
 
 def _fetch_jodi_data():
     if _jodi_is_fresh(): print("  JODI data fresh, skipping..."); return
-    if not SERPER_API_KEY or not GEMINI_API_KEY:
-        print("  WARNING: SERPER/GEMINI key missing, skipping JODI"); return
+    if not SERPER_API_KEY or not ANTHROPIC_API_KEY:
+        print("  WARNING: SERPER/ANTHROPIC key missing, skipping JODI"); return
     print("  Fetching JODI international oil data...")
     try:
         resp = requests.post("https://google.serper.dev/search",
@@ -96,14 +97,19 @@ Return ONLY JSON array: [{{"country":"...","indicator":"production|demand|stocks
 Be conservative -- only include confident numbers.
 Results:\n{context}"""
     try:
-        resp = requests.post(f"{GEMINI_BASE}/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}",
-            json={"contents":[{"parts":[{"text":prompt}]}]}, timeout=60)
-        if resp.status_code != 200: return
-        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model=CLAUDE_MODEL, max_tokens=1024, temperature=0.1,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text.strip()
         if text.startswith("```"): text = text.split("\n",1)[1]
         if text.endswith("```"): text = text[:-3]
+        import re as _re
+        match = _re.search(r'\[.*\]', text, flags=_re.DOTALL)
+        if match: text = match.group(0)
         records = json.loads(text.strip())
-    except Exception as e: print(f"    Gemini JODI error: {e}"); return
+    except Exception as e: print(f"    Claude JODI error: {e}"); return
     today_str = date.today().isoformat(); rows = []
     for rec in records:
         country, indicator, dt, value, unit = rec.get("country",""), rec.get("indicator",""), rec.get("date",""), rec.get("value"), rec.get("unit","")

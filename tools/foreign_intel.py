@@ -1,9 +1,10 @@
 """Foreign Intelligence — discover, translate, score foreign-language financial articles."""
 import json, time, logging, requests
+import anthropic
 from datetime import datetime, date
 from tools.db import get_conn, query
 from tools.config import (
-    SERPER_API_KEY, FIRECRAWL_API_KEY, GEMINI_API_KEY, DEEPL_API_KEY,
+    SERPER_API_KEY, FIRECRAWL_API_KEY, ANTHROPIC_API_KEY, CLAUDE_MODEL, DEEPL_API_KEY,
     FOREIGN_INTEL_SOURCES, MARKET_LANGUAGE, MARKET_SERPER_PARAMS,
     FOREIGN_INTEL_MAX_ARTICLES_PER_SOURCE, FOREIGN_INTEL_MAX_CHARS_TRANSLATE,
     FOREIGN_INTEL_FULL_TEXT_THRESHOLD, FOREIGN_INTEL_FULL_TEXT_MAX_CHARS,
@@ -88,8 +89,8 @@ def _calibrate_sentiment(raw, language):
         return max(-1.0, min(1.0, raw * factor))
     return max(-1.0, min(1.0, raw * cal))
 
-def _analyze_with_gemini(title, body, language, market, ticker_map):
-    if not GEMINI_API_KEY: return None
+def _analyze_with_claude(title, body, language, market, ticker_map):
+    if not ANTHROPIC_API_KEY: return None
     known = ", ".join(f"{n} ({t})" for n, t in list(ticker_map.items())[:50]
                       if not n.endswith((".T",".KS",".HK",".DE",".PA",".MI",".AS",".SW",".L")))
     prompt = f"""Financial analyst extracting trading signals from translated {language} article.
@@ -100,20 +101,21 @@ Return JSON: {{"sentiment": float -1..1, "relevance_score": int 0-100, "key_them
 "mentioned_tickers": [ADR tickers], "bullish_for": [tickers], "bearish_for": [tickers], "summary": "2-3 sentences"}}
 Only output valid JSON."""
     try:
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
-            headers={"Content-Type": "application/json"},
-            json={"contents": [{"parts": [{"text": prompt}]}],
-                  "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1000}}, timeout=30)
-        resp.raise_for_status()
-        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model=CLAUDE_MODEL, max_tokens=1024, temperature=0.1,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text.strip()
         if text.startswith("```"): text = text.split("\n", 1)[1] if "\n" in text else text[3:]
         if text.endswith("```"): text = text[:-3]
+        match = __import__('re').search(r'\{.*\}', text, flags=__import__('re').DOTALL)
+        if match: text = match.group(0)
         result = json.loads(text.strip())
         result["sentiment"] = _calibrate_sentiment(float(result.get("sentiment", 0)), language)
         return result
-    except (json.JSONDecodeError, Exception) as e:
-        logger.error(f"Gemini analysis failed: {e}"); return None
+    except Exception as e:
+        logger.error(f"Claude analysis failed: {e}"); return None
 
 def _store_signal(symbol, local_ticker, article, translation, analysis, market, language):
     today = date.today().isoformat()
@@ -157,7 +159,7 @@ def run(markets=None):
                     if not body or len(body) < 100: _cache_url(article["url"], "empty"); continue
                     translation = _translate_tiered(article.get("title",""), body, language)
                     total_chars += translation.get("char_count", 0)
-                    analysis = _analyze_with_gemini(translation["title_translated"],
+                    analysis = _analyze_with_claude(translation["title_translated"],
                         translation["body_translated"], language, market, ticker_map)
                     if not analysis: _cache_url(article["url"], "analysis_failed"); continue
                     rel = analysis.get("relevance_score", 0)
@@ -165,7 +167,7 @@ def run(markets=None):
                         extra, total_chars = _translate_tier3(body, language, total_chars)
                         if extra:
                             full = translation["body_translated"] + " " + extra
-                            analysis = _analyze_with_gemini(translation["title_translated"],
+                            analysis = _analyze_with_claude(translation["title_translated"],
                                 full, language, market, ticker_map) or analysis
                             translation["body_translated"] = full
                             translation["translation_method"] = "deepl_full"
