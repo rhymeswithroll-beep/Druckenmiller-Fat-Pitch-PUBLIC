@@ -17,6 +17,121 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ---------------------------------------------------------------------------
+# LOCAL SQLite — tables that are pipeline-internal (large, high-churn) live
+# here instead of Neon to avoid burning the cloud transfer quota.
+# The API server is co-located on the same machine, so it can read these too.
+# ---------------------------------------------------------------------------
+_SQLITE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    ".tmp", "druckenmiller.db"
+)
+
+LOCAL_TABLES = frozenset({
+    "price_data",           # 903 stocks × 500+ days — the single biggest Neon consumer
+    "stock_universe",       # 903 rows read by every module on every run
+    "macro_indicators",     # FRED time-series, read heavily by macro/technical modules
+    "earnings_calendar",    # Pipeline-internal lookup only
+    "insider_transactions", # 14K+ rows, upserted fresh every run — Neon killer
+    "insider_signals",      # Module-internal output, read back by same module
+})
+
+
+def _get_sqlite():
+    """Open a fresh SQLite connection to the local DB (cheap for a local file)."""
+    import sqlite3
+    os.makedirs(os.path.dirname(_SQLITE_PATH), exist_ok=True)
+    conn = sqlite3.connect(_SQLITE_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_local_db():
+    """Create local SQLite tables if they don't exist."""
+    conn = _get_sqlite()
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS stock_universe (
+                symbol TEXT PRIMARY KEY, name TEXT, sector TEXT, industry TEXT,
+                market_cap REAL, asset_class TEXT DEFAULT 'stock'
+            );
+            CREATE TABLE IF NOT EXISTS price_data (
+                symbol TEXT, date TEXT, open REAL, high REAL, low REAL, close REAL,
+                volume REAL, adj_close REAL, asset_class TEXT,
+                PRIMARY KEY (symbol, date)
+            );
+            CREATE TABLE IF NOT EXISTS macro_indicators (
+                indicator_id TEXT, date TEXT, value REAL,
+                PRIMARY KEY (indicator_id, date)
+            );
+            CREATE TABLE IF NOT EXISTS earnings_calendar (
+                symbol TEXT, date TEXT, earnings_date TEXT, estimate_eps REAL,
+                actual_eps REAL, surprise_pct REAL,
+                PRIMARY KEY (symbol, date)
+            );
+            CREATE TABLE IF NOT EXISTS insider_transactions (
+                symbol TEXT, date TEXT, insider_name TEXT, insider_title TEXT,
+                transaction_type TEXT, shares REAL, price REAL, value REAL,
+                shares_owned_after REAL, filing_url TEXT, source TEXT,
+                PRIMARY KEY (symbol, date, insider_name, transaction_type)
+            );
+            CREATE TABLE IF NOT EXISTS insider_signals (
+                symbol TEXT, date TEXT, insider_score REAL, cluster_buy INTEGER,
+                cluster_count INTEGER, large_buys_count INTEGER,
+                total_buy_value_30d REAL, total_sell_value_30d REAL,
+                unusual_volume_flag INTEGER, top_buyer TEXT, narrative TEXT,
+                PRIMARY KEY (symbol, date)
+            );
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _extract_table(sql: str):
+    """Extract the primary table name from SQL for local/remote routing."""
+    m = _re.search(
+        r'(?:FROM|INTO|UPDATE|TABLE(?:\s+IF\s+NOT\s+EXISTS)?)\s+(\w+)',
+        sql, flags=_re.IGNORECASE,
+    )
+    return m.group(1).lower() if m else None
+
+
+def _sqlite_query(sql, params=None):
+    """Run a SELECT against the local SQLite DB, return list of dicts."""
+    conn = _get_sqlite()
+    try:
+        cur = conn.execute(sql, params or [])
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def _sqlite_upsert(table: str, columns: list, rows: list):
+    """Bulk INSERT OR REPLACE into a local SQLite table."""
+    if not rows:
+        return
+    col_str = ", ".join(columns)
+    placeholders = ", ".join(["?"] * len(columns))
+    sql = f"INSERT OR REPLACE INTO {table} ({col_str}) VALUES ({placeholders})"
+    conn = _get_sqlite()
+    try:
+        conn.executemany(sql, rows)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _sqlite_execute(sql, params=None):
+    """Run a single DML statement against the local SQLite DB."""
+    conn = _get_sqlite()
+    try:
+        conn.execute(sql, params or [])
+        conn.commit()
+    finally:
+        conn.close()
+
+
 _DATABASE_URL = os.environ.get("DATABASE_URL")
 if not _DATABASE_URL:
     raise RuntimeError("DATABASE_URL env var is not set. Set it to the Neon connection string in .env")
@@ -367,12 +482,15 @@ TABLE_PKS: dict[str, list[str]] = {
 
 def init_db():
     """Ensure all core tables exist (CREATE IF NOT EXISTS). Thread-safe: runs once per process,
-    and uses a PG advisory lock to prevent concurrent DDL races across Modal workers."""
+    and uses a PG advisory lock to prevent concurrent DDL races across Modal workers.
+    Also initialises the local SQLite DB for LOCAL_TABLES."""
     global _init_db_done
     with _init_db_lock:
         if _init_db_done:
             return
         _init_db_done = True
+    # Always init local SQLite first — no network dependency
+    _init_local_db()
     conn = get_conn()
     cur = conn.cursor()
     try:
@@ -386,13 +504,11 @@ def init_db():
         conn.commit()
 
         statements = [
-            """CREATE TABLE IF NOT EXISTS stock_universe (symbol TEXT PRIMARY KEY, name TEXT, sector TEXT, industry TEXT, market_cap REAL, asset_class TEXT DEFAULT 'stock')""",
-            """CREATE TABLE IF NOT EXISTS price_data (symbol TEXT, date TEXT, open REAL, high REAL, low REAL, close REAL, volume BIGINT, adj_close REAL, asset_class TEXT, PRIMARY KEY (symbol, date))""",
+            # stock_universe, price_data, macro_indicators, earnings_calendar → LOCAL_TABLES (SQLite)
             """CREATE TABLE IF NOT EXISTS technical_scores (symbol TEXT, date TEXT, trend_score REAL, momentum_score REAL, volatility_score REAL, volume_score REAL, total_score REAL, breakout_score REAL, relative_strength_score REAL, breadth_score REAL, PRIMARY KEY (symbol, date))""",
             """CREATE TABLE IF NOT EXISTS fundamental_scores (symbol TEXT, date TEXT, value_score REAL, quality_score REAL, growth_score REAL, total_score REAL, PRIMARY KEY (symbol, date))""",
             """CREATE TABLE IF NOT EXISTS fundamentals (symbol TEXT NOT NULL, metric TEXT NOT NULL, value REAL, updated_at TEXT DEFAULT NOW(), PRIMARY KEY (symbol, metric))""",
             """CREATE TABLE IF NOT EXISTS signals (symbol TEXT, date TEXT, composite_score REAL, signal TEXT, sector TEXT, technical_score REAL, fundamental_score REAL, asset_class TEXT, macro_score REAL, entry_price REAL, stop_loss REAL, target_price REAL, rr_ratio REAL, position_size_shares REAL, position_size_dollars REAL, PRIMARY KEY (symbol, date))""",
-            """CREATE TABLE IF NOT EXISTS macro_indicators (indicator_id TEXT, date TEXT, value REAL, PRIMARY KEY (indicator_id, date))""",
             """CREATE TABLE IF NOT EXISTS macro_scores (date TEXT PRIMARY KEY, regime TEXT, regime_score REAL, total_score REAL, fed_funds_score REAL, m2_score REAL, real_rates_score REAL, yield_curve_score REAL, credit_spreads_score REAL, dxy_score REAL, vix_score REAL, details TEXT)""",
             """CREATE TABLE IF NOT EXISTS market_breadth (date TEXT PRIMARY KEY, advancers INTEGER, decliners INTEGER, new_highs INTEGER, new_lows INTEGER, adv_dec_ratio REAL, advance_decline_ratio REAL, pct_above_200dma REAL, breadth_score REAL, sector_rotation TEXT)""",
             """CREATE TABLE IF NOT EXISTS sector_rotation (sector TEXT, date TEXT, rs_ratio REAL, rs_momentum REAL, quadrant TEXT, rotation_score REAL, score REAL, PRIMARY KEY (sector, date))""",
@@ -406,7 +522,7 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS foreign_intel_url_cache (url TEXT PRIMARY KEY, fetched_date TEXT, content TEXT)""",
             """CREATE TABLE IF NOT EXISTS foreign_ticker_map (local_ticker TEXT PRIMARY KEY, adr_ticker TEXT, company_name_local TEXT, company_name_english TEXT, market TEXT, sector TEXT, in_universe INTEGER DEFAULT 1)""",
             """CREATE TABLE IF NOT EXISTS research_signals (symbol TEXT, date TEXT, source TEXT, url TEXT, title TEXT, sentiment REAL, relevance_score REAL, key_themes TEXT, mentioned_tickers TEXT, bullish_for TEXT, bearish_for TEXT, article_summary TEXT, signal_type TEXT, score REAL, details TEXT, PRIMARY KEY (symbol, date, source))""",
-            """CREATE TABLE IF NOT EXISTS research_url_cache (url TEXT PRIMARY KEY, fetched_date TEXT, content TEXT)""",
+            """CREATE TABLE IF NOT EXISTS research_url_cache (url TEXT PRIMARY KEY, fetched_date TEXT, content TEXT, scraped_at TEXT, status TEXT)""",
             """CREATE TABLE IF NOT EXISTS news_displacement (symbol TEXT, date TEXT, news_headline TEXT, news_source TEXT, news_url TEXT, materiality_score REAL, expected_direction TEXT, expected_magnitude REAL, actual_price_change_1d REAL, actual_price_change_3d REAL, displacement_score REAL, time_horizon TEXT, order_type TEXT, affected_tickers TEXT, confidence REAL, narrative TEXT, status TEXT DEFAULT 'active', details TEXT, PRIMARY KEY (symbol, date))""",
             """CREATE TABLE IF NOT EXISTS reddit_signals (symbol TEXT, date TEXT, subreddit TEXT, mention_count INTEGER, sentiment REAL, score REAL, PRIMARY KEY (symbol, date, subreddit))""",
             """CREATE TABLE IF NOT EXISTS alt_data_scores (symbol TEXT, date TEXT, source TEXT, score REAL, details TEXT, PRIMARY KEY (symbol, date, source))""",
@@ -445,15 +561,15 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS estimate_momentum_signals (symbol TEXT, date TEXT, em_score REAL, revision_velocity REAL, surprise_momentum REAL, details TEXT, PRIMARY KEY (symbol, date))""",
             """CREATE TABLE IF NOT EXISTS regulatory_signals (symbol TEXT, date TEXT, reg_score REAL, event_count INTEGER, details TEXT, PRIMARY KEY (symbol, date))""",
             """CREATE TABLE IF NOT EXISTS regulatory_events (event_id TEXT, date TEXT, title TEXT, source TEXT, severity REAL, category TEXT, direction TEXT, jurisdiction TEXT, affected_symbols TEXT, details TEXT, PRIMARY KEY (event_id, date))""",
-            """CREATE TABLE IF NOT EXISTS consensus_blindspot_signals (symbol TEXT, date TEXT, cbs_score REAL, gap_type TEXT, cycle_position REAL, details TEXT, PRIMARY KEY (symbol, date))""",
+            """CREATE TABLE IF NOT EXISTS consensus_blindspot_signals (symbol TEXT, date TEXT, cbs_score REAL, gap_type TEXT, cycle_position TEXT, details TEXT, PRIMARY KEY (symbol, date))""",
             """CREATE TABLE IF NOT EXISTS intelligence_reports (id SERIAL PRIMARY KEY, date TEXT, topic TEXT, report_type TEXT, content TEXT, metadata TEXT, topic_type TEXT, expert_type TEXT, regime TEXT, symbols_covered TEXT, report_html TEXT, report_markdown TEXT)""",
             """CREATE TABLE IF NOT EXISTS thematic_ideas (id SERIAL PRIMARY KEY, date TEXT, theme TEXT, symbols TEXT, score REAL, details TEXT)""",
             """CREATE TABLE IF NOT EXISTS ai_exec_signals (symbol TEXT, date TEXT, score REAL, details TEXT, PRIMARY KEY (symbol, date))""",
-            """CREATE TABLE IF NOT EXISTS ai_exec_investments (symbol TEXT, date TEXT, company TEXT, investment_type TEXT, amount REAL, details TEXT, PRIMARY KEY (symbol, date, investment_type))""",
+            """CREATE TABLE IF NOT EXISTS ai_exec_investments (exec_name TEXT, exec_org TEXT, exec_prominence TEXT, activity_type TEXT, target_company TEXT, target_ticker TEXT, target_sector TEXT, investment_amount REAL, funding_round TEXT, is_public INTEGER, ipo_expected INTEGER, ipo_timeline TEXT, date_reported TEXT, confidence REAL, summary TEXT, source_url TEXT, source TEXT, raw_score REAL, scan_date TEXT, PRIMARY KEY (exec_name, target_company, date_reported))""",
             """CREATE TABLE IF NOT EXISTS ai_exec_url_cache (url TEXT PRIMARY KEY, fetched_date TEXT, content TEXT)""",
             """CREATE TABLE IF NOT EXISTS energy_intel_signals (symbol TEXT, date TEXT, energy_intel_score REAL, inventory_signal REAL, production_signal REAL, demand_signal REAL, trade_flow_signal REAL, global_balance_signal REAL, ticker_category TEXT, narrative TEXT, PRIMARY KEY (symbol, date))""",
             """CREATE TABLE IF NOT EXISTS energy_eia_enhanced (series_id TEXT, date TEXT, value REAL, category TEXT, description TEXT, wow_change REAL, yoy_change REAL, PRIMARY KEY (series_id, date))""",
-            """CREATE TABLE IF NOT EXISTS energy_supply_anomalies (id SERIAL PRIMARY KEY, date TEXT, anomaly_type TEXT, series_id TEXT, description TEXT, zscore REAL, severity REAL, affected_tickers TEXT, details TEXT, status TEXT DEFAULT 'active', detected_at TEXT)""",
+            """CREATE TABLE IF NOT EXISTS energy_supply_anomalies (id SERIAL PRIMARY KEY, date TEXT, anomaly_type TEXT, series_id TEXT, description TEXT, zscore REAL, severity TEXT, affected_tickers TEXT, details TEXT, status TEXT DEFAULT 'active', detected_at TEXT)""",
             """CREATE TABLE IF NOT EXISTS energy_trade_flows (reporter TEXT, partner TEXT, commodity_code TEXT, period TEXT, trade_flow TEXT, value_usd REAL, quantity_kg REAL, last_updated TEXT, date TEXT, country TEXT, product TEXT, flow_type TEXT, value REAL, PRIMARY KEY (reporter, partner, commodity_code, period, trade_flow))""",
             """CREATE TABLE IF NOT EXISTS energy_seasonal_norms (series_id TEXT, week_of_year INTEGER, avg_value REAL, std_value REAL, min_value REAL, max_value REAL, sample_count INTEGER, last_updated TEXT, PRIMARY KEY (series_id, week_of_year))""",
             """CREATE TABLE IF NOT EXISTS energy_jodi_data (country TEXT, indicator TEXT, date TEXT, value REAL, unit TEXT, mom_change REAL, yoy_change REAL, last_updated TEXT, flow TEXT, product TEXT, PRIMARY KEY (country, indicator, date))""",
@@ -719,9 +835,23 @@ def init_db():
         ]
 
         for stmt in statements:
-            cur.execute(stmt)
+            try:
+                cur.execute("SAVEPOINT _init_stmt")
+                cur.execute(stmt)
+                cur.execute("RELEASE SAVEPOINT _init_stmt")
+            except psycopg2.errors.DuplicateTable:
+                cur.execute("ROLLBACK TO SAVEPOINT _init_stmt")
+            except psycopg2.errors.UniqueViolation:
+                # Stale composite row type from a previous partial run — safe to skip
+                cur.execute("ROLLBACK TO SAVEPOINT _init_stmt")
         for stmt in alter_statements:
-            cur.execute(stmt)
+            try:
+                cur.execute("SAVEPOINT _init_stmt")
+                cur.execute(stmt)
+                cur.execute("RELEASE SAVEPOINT _init_stmt")
+            except (psycopg2.errors.DuplicateObject, psycopg2.errors.DuplicateTable,
+                    psycopg2.errors.UniqueViolation):
+                cur.execute("ROLLBACK TO SAVEPOINT _init_stmt")
 
         conn.commit()
     finally:
@@ -824,7 +954,10 @@ def _to_pg(sql):
 
 
 def query(sql, params=None):
-    """Execute SQL and return list of dicts. Accepts both ? and %s placeholders."""
+    """Execute SQL and return list of dicts. Accepts both ? and %s placeholders.
+    Automatically routes queries for LOCAL_TABLES to the local SQLite file."""
+    if _extract_table(sql) in LOCAL_TABLES:
+        return _sqlite_query(sql, params)
     conn = get_conn()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -867,10 +1000,18 @@ def query_df(sql, params=None):
 def upsert_many(table, columns, rows):
     """INSERT ... ON CONFLICT (pk_cols) DO UPDATE SET ... for many rows.
 
-    Automatically filters to columns that exist in the Postgres table, adding
-    new columns on-the-fly with ALTER TABLE when the pipeline introduces them.
+    Routes LOCAL_TABLES writes to SQLite; all other tables go to Neon.
+    For Neon tables: automatically filters to columns that exist in the Postgres
+    table, adding new columns on-the-fly with ALTER TABLE when introduced.
     """
     if not rows:
+        return
+    if table in LOCAL_TABLES:
+        def _coerce(v):
+            t = type(v).__module__
+            return v.item() if t == "numpy" else v
+        coerced = [tuple(_coerce(v) for v in row) for row in rows]
+        _sqlite_upsert(table, columns, coerced)
         return
     pk_cols = TABLE_PKS.get(table)
     if not pk_cols:

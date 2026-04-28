@@ -28,14 +28,14 @@ STAGE_MULT = {"speculation":0.30,"rumor":0.60,"confirmed_interest":0.85,
 
 def _load_universe():
     return query("SELECT u.symbol,u.sector,f.value as market_cap,u.name as company_name "
-        "FROM stock_universe u INNER JOIN fundamentals f ON f.symbol=u.symbol AND f.metric='marketCap' "
+        "FROM stock_universe u INNER JOIN fundamentals f ON f.symbol=u.symbol AND f.metric='market_cap' "
         "WHERE u.sector IS NOT NULL AND f.value IS NOT NULL AND f.value>0")
 
 def _load_fundamentals():
     rows = query("SELECT symbol,metric,value FROM fundamentals WHERE metric IN "
-        "('trailingPE','forwardPE','priceToBook','priceToSales','enterpriseToEbitda',"
-        "'debt_equity','current_ratio','profit_margin','operating_margin','roe','roa',"
-        "'revenue_growth','earnings_growth','dividend_yield','analyst_target_consensus')")
+        "('pe_ratio','pb_ratio','ps_ratio','enterprise_value',"
+        "'debt_equity','current_ratio','net_margin','operating_margin','roe','roa',"
+        "'revenue_growth','earnings_growth','dividend_yield')")
     r = {}
     for row in rows: r.setdefault(row["symbol"], {})[row["metric"]] = row["value"]
     return r
@@ -67,14 +67,12 @@ def _load_insider_signals():
 
 def _sv(f):
     s,c = 0.0,0
-    ev = f.get("enterpriseToEbitda")
+    ev = f.get("enterprise_value")
     if ev and ev>0: c+=2; s+=(100 if ev<8 else 75 if ev<12 else 40 if ev<18 else 10)*2
-    pb = f.get("priceToBook")
+    pb = f.get("pb_ratio")
     if pb and pb>0: c+=1; s+=90 if pb<1.5 else 60 if pb<3 else 30 if pb<5 else 10
-    fpe = f.get("forwardPE")
-    if fpe and fpe>0: c+=1; s+=85 if fpe<12 else 60 if fpe<18 else 35 if fpe<25 else 10
-    tpe = f.get("trailingPE")
-    if f.get("analyst_target_consensus") and tpe and tpe>0 and fpe and fpe<tpe*0.85: c+=1; s+=70
+    pe = f.get("pe_ratio")
+    if pe and pe>0: c+=2; s+=(85 if pe<12 else 60 if pe<18 else 35 if pe<25 else 10)*2
     return (s/c) if c else 0.0
 
 def _sb(f):

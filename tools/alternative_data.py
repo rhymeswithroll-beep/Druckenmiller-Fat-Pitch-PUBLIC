@@ -301,7 +301,7 @@ def _score_symbols(today):
             for sym,d in sc.items() if d["t"]/mx*100>=10]
     if rows:
         with get_conn() as conn:
-            conn.executemany("INSERT OR REPLACE INTO alt_data_scores (symbol,source,date,alt_data_score,contributing_signals) VALUES (?,?,?,?,?)",rows)
+            conn.executemany("INSERT OR REPLACE INTO alt_data_scores (symbol,source,date,score,details) VALUES (?,?,?,?,?)",rows)
     print(f"  Scored {len(rows)} symbols")
 
 def run():

@@ -67,7 +67,7 @@ Markets:\n{chr(10).join(texts)}\nRespond ONLY with JSON array."""
         try:
             response = client.messages.create(
                 model=CLAUDE_MODEL,
-                max_tokens=2048,
+                max_tokens=4096,
                 temperature=0.2,
                 messages=[{"role": "user", "content": prompt}],
             )

@@ -181,40 +181,37 @@ Extract the following as JSON:
 
 Respond ONLY with valid JSON. No markdown, no explanation."""
 
-    try:
-        resp = requests.post(
-            f"{GEMINI_BASE}/models/{GEMINI_MODEL}:generateContent",
-            headers={"Content-Type": "application/json"},
-            params={"key": GEMINI_API_KEY},
-            json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.1,
-                    "maxOutputTokens": 1024,
+    _fallback = {"tickers": [], "themes": [], "bullish_for": [], "bearish_for": [], "summary": title[:200], "relevance_score": 30}
+    for _attempt in range(3):
+        try:
+            resp = requests.post(
+                f"{GEMINI_BASE}/models/{GEMINI_MODEL}:generateContent",
+                headers={"Content-Type": "application/json"},
+                params={"key": GEMINI_API_KEY},
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024},
                 },
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-
-        # Clean up potential markdown code fences
-        raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
-        raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE)
-
-        result = json.loads(raw)
-        return result
-    except Exception as e:
-        print(f"  Warning: Gemini analysis failed: {e}")
-        return {
-            "tickers": [],
-            "themes": [],
-            "bullish_for": [],
-            "bearish_for": [],
-            "summary": title[:200],
-            "relevance_score": 30,
-        }
+                timeout=30,
+            )
+            if resp.status_code == 429:
+                wait = 35 * (2 ** _attempt)
+                print(f"  Gemini rate limit — waiting {wait}s (attempt {_attempt+1}/3)...")
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
+            raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE)
+            return json.loads(raw)
+        except Exception as e:
+            print(f"  Warning: Gemini analysis failed: {e}")
+            if _attempt < 2:
+                time.sleep(10)
+                continue
+            return _fallback
+    return _fallback
 
 
 def run():
@@ -283,9 +280,9 @@ def run():
             # Plus additional rows per mentioned ticker for easier querying
             article_rows = []
 
-            # Primary row (aggregate)
+            # Primary row (aggregate) — use '_MACRO_' sentinel so symbol NOT NULL is satisfied
             article_rows.append((
-                None, today, source_name, url, title,
+                '_MACRO_', today, source_name, url, title,
                 0.0, relevance_score, key_themes,
                 mentioned_tickers, bullish_for, bearish_for, article_summary,
             ))

@@ -13,7 +13,7 @@ from tools.config import (EIA_API_KEY, GIE_REFRESH_HOURS, GIE_TIGHT_FILL_PCT,
 from tools.db import get_conn, init_db, query
 logger = logging.getLogger(__name__)
 GIE_API, ENTSO_API = "https://agsi.gie.eu/api", "https://transparency.entsog.eu/api/v1"
-CFTC_API, EIA_LNG_API = "https://publicreporting.cftc.gov/resource/72hh-3qpy.json", "https://api.eia.gov/v2/natural-gas/move/lngexport/data/"
+CFTC_API, EIA_LNG_API = "https://publicreporting.cftc.gov/resource/72hh-3qpy.json", "https://api.eia.gov/v2/natural-gas/move/poe2/data/"
 GIE_API_KEY = os.getenv("GIE_API_KEY", "")
 SURPRISE_SERIES = {"crude": "PET.WCESTUS1.W", "natgas": "NG.NW2_EPG0_SWO_R48_BCF.W", "gasoline": "PET.WGTSTUS1.W", "distillate": "PET.WDISTUS1.W"}
 LNG_TERMINAL_ALIASES = {"Sabine Pass": "SABINE_PASS", "Corpus Christi": "CORPUS_CHRISTI", "Freeport": "FREEPORT", "Cameron": "CAMERON", "Elba Island": "ELBA_ISLAND", "Cove Point": "COVE_POINT"}
@@ -147,7 +147,8 @@ def _fetch_eia_lng_exports():
     if not EIA_API_KEY: logger.warning("EIA_API_KEY not set; LNG skipped"); return []
     try:
         resp = requests.get(EIA_LNG_API, params={"api_key": EIA_API_KEY, "frequency": "monthly",
-            "data[0]": "value", "sort[0][column]": "period", "sort[0][direction]": "desc", "offset": 0, "length": 120}, timeout=20)
+            "data[0]": "value", "facets[process][]": "ENG",
+            "sort[0][column]": "period", "sort[0][direction]": "desc", "offset": 0, "length": 500}, timeout=20)
         resp.raise_for_status(); return resp.json().get("response", {}).get("data", [])
     except Exception as e: logger.warning(f"EIA LNG API failed: {e}"); return []
 
@@ -156,7 +157,7 @@ def _persist_lng_utilization(rows):
     for row in rows:
         try:
             period = str(row.get("period",""))[:7]; val = float(row.get("value",0) or 0)
-            desc = str(row.get("description", row.get("seriesId", "")))
+            desc = str(row.get("series-description", row.get("description", row.get("seriesId", ""))))
             for tname, tkey in LNG_TERMINAL_ALIASES.items():
                 if tname.lower() in desc.lower(): tp[tkey][period] += val; break
         except Exception: pass

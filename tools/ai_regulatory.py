@@ -134,7 +134,7 @@ def _classify(events):
             f"Events:\n{chr(10).join(texts)}\nReturn JSON array only: [{{\"index\":N,\"is_significant\":bool,\"impact_category\":\"...\",\"severity\":1-5,\"stage\":\"...\",\"direction\":\"...\",\"timeline\":\"...\",\"specific_symbols\":[],\"jurisdiction\":\"...\",\"rationale\":\"...\"}}]")
         try:
             response = client.messages.create(
-                model=CLAUDE_MODEL, max_tokens=2048, temperature=0.2,
+                model=CLAUDE_MODEL, max_tokens=4096, temperature=0.2,
                 messages=[{"role": "user", "content": prompt}],
             )
             text = response.content[0].text.strip()

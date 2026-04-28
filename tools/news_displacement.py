@@ -69,7 +69,7 @@ RULES: Only genuinely material news. Be specific on magnitude. Skip noise. Retur
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         response = client.messages.create(
             model=CLAUDE_MODEL,
-            max_tokens=2048,
+            max_tokens=4096,
             temperature=0.1,
             messages=[{"role": "user", "content": prompt}],
         )

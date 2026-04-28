@@ -154,23 +154,25 @@ def _boost_smart_money_scores(today):
     insider_rows = query("SELECT symbol, insider_score FROM insider_signals WHERE date = ?", [today])
     if not insider_rows: return 0
     sm_map = {r["symbol"]: r for r in query("SELECT s.symbol, s.date, s.conviction_score FROM smart_money_scores s INNER JOIN (SELECT symbol, MAX(date) as mx FROM smart_money_scores GROUP BY symbol) m ON s.symbol = m.symbol AND s.date = m.mx")}
-    updates = 0
+    inserts, updates = [], []
+    for row in insider_rows:
+        sym, iscore = row["symbol"], row["insider_score"]
+        if sym not in sm_map:
+            if iscore >= 50:
+                inserts.append((sym, today, 0, min(100, iscore * 0.6), '[]'))
+            continue
+        sm = sm_map[sym]; current = sm["conviction_score"] or 0
+        boost = INSIDER_BOOST_HIGH if iscore >= 70 else INSIDER_BOOST_MED if iscore >= 50 else INSIDER_SELL_PENALTY if 0 < iscore <= 20 else None
+        if boost is None: continue
+        new_score = max(0, min(100, current + boost))
+        if new_score != current:
+            updates.append((new_score, sym, sm["date"]))
     with get_conn() as conn:
-        for row in insider_rows:
-            sym, iscore = row["symbol"], row["insider_score"]
-            if sym not in sm_map:
-                if iscore >= 50:
-                    conn.execute("INSERT OR REPLACE INTO smart_money_scores (symbol, date, manager_count, conviction_score, top_holders) VALUES (?, ?, 0, ?, '[]')", [sym, today, min(100, iscore * 0.6)])
-                    updates += 1
-                continue
-            sm = sm_map[sym]; current = sm["conviction_score"] or 0
-            boost = INSIDER_BOOST_HIGH if iscore >= 70 else INSIDER_BOOST_MED if iscore >= 50 else INSIDER_SELL_PENALTY if 0 < iscore <= 20 else None
-            if boost is None: continue
-            new_score = max(0, min(100, current + boost))
-            if new_score != current:
-                conn.execute("UPDATE smart_money_scores SET conviction_score = ? WHERE symbol = ? AND date = ?", [new_score, sym, sm["date"]])
-                updates += 1
-    return updates
+        if inserts:
+            conn.executemany("INSERT OR REPLACE INTO smart_money_scores (symbol, date, manager_count, conviction_score, top_holders) VALUES (?, ?, ?, ?, ?)", inserts)
+        if updates:
+            conn.executemany("UPDATE smart_money_scores SET conviction_score = ? WHERE symbol = ? AND date = ?", updates)
+    return len(inserts) + len(updates)
 
 def run():
     init_db(); today = date.today().isoformat()
@@ -179,13 +181,24 @@ def run():
     if not universe_symbols: print("  No symbols in universe."); return
     new_txs = fetch_all_transactions(universe_symbols)
     if new_txs:
-        # Backfill missing prices from price_data using closing price on transaction date
-        for tx in new_txs:
-            if tx["price"] is None and tx["shares"] > 0:
-                rows = query("SELECT close FROM price_data WHERE symbol=? AND date=? LIMIT 1", [tx["symbol"], tx["date"]])
-                if rows:
-                    tx["price"] = round(rows[0]["close"], 4)
-                    tx["value"] = round(tx["shares"] * rows[0]["close"], 2)
+        # Batch-backfill missing prices: query price_data once by symbol+date range,
+        # then apply results — avoids N individual round-trips.
+        missing_syms = {tx["symbol"] for tx in new_txs if tx["price"] is None and tx["shares"] > 0}
+        if missing_syms:
+            dates = [tx["date"] for tx in new_txs if tx["price"] is None and tx["shares"] > 0]
+            min_date, max_date = min(dates), max(dates)
+            sym_ph = ",".join(["?"] * len(missing_syms))
+            price_rows = query(
+                f"SELECT symbol, date, close FROM price_data WHERE symbol IN ({sym_ph}) AND date BETWEEN ? AND ?",
+                list(missing_syms) + [min_date, max_date]
+            )
+            price_map = {(r["symbol"], r["date"]): r["close"] for r in price_rows}
+            for tx in new_txs:
+                if tx["price"] is None and tx["shares"] > 0:
+                    close = price_map.get((tx["symbol"], tx["date"]))
+                    if close:
+                        tx["price"] = round(close, 4)
+                        tx["value"] = round(tx["shares"] * close, 2)
         tx_rows = [(tx["symbol"], tx["date"], tx["insider_name"], tx["insider_title"], tx["transaction_type"],
             tx["shares"], tx["price"], tx["value"], tx["shares_owned_after"], tx["filing_url"], tx["source"]) for tx in new_txs]
         upsert_many("insider_transactions", ["symbol", "date", "insider_name", "insider_title", "transaction_type",
@@ -193,8 +206,13 @@ def run():
         print(f"  Stored {len(tx_rows)} new insider transactions")
     print("  Detecting insider signals...")
     cutoff = (date.today() - timedelta(days=INSIDER_LOOKBACK_DAYS)).isoformat()
-    sym_placeholders = ",".join(["?"] * len(universe_symbols))
-    all_tx_rows = query(f"SELECT symbol, date, insider_name, insider_title, transaction_type, shares, price, value FROM insider_transactions WHERE date >= ? AND symbol IN ({sym_placeholders})", [cutoff] + list(universe_symbols))
+    # insider_transactions is LOCAL (SQLite) — no Neon round-trip, no 903-symbol IN clause needed
+    all_tx_rows = query(
+        "SELECT symbol, date, insider_name, insider_title, transaction_type, shares, price, value "
+        "FROM insider_transactions WHERE date >= ?", [cutoff]
+    )
+    # Filter to universe symbols in Python (cheap set lookup)
+    all_tx_rows = [r for r in all_tx_rows if r["symbol"] in universe_symbols]
     by_symbol = defaultdict(list)
     for row in all_tx_rows: by_symbol[row["symbol"]].append(row)
     signal_rows = []

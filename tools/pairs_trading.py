@@ -220,6 +220,9 @@ def _write_spreads(spreads: list[dict]):
 def _write_signals(signals: list[dict]):
     if not signals:
         return
+    def _c(v):
+        """Coerce numpy scalars to native Python so psycopg2 serialises correctly."""
+        return v.item() if hasattr(v, "item") else v
     today_str = date.today().isoformat()
     with get_conn() as conn:
         conn.execute("DELETE FROM pair_signals WHERE date = ?", [today_str])
@@ -228,10 +231,11 @@ def _write_signals(signals: list[dict]):
                 correlation_60d, cointegration_pvalue, hedge_ratio, half_life_days, pairs_score, direction,
                 runner_symbol, runner_tech_score, runner_fund_score, narrative, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            [(s["date"], s["signal_type"], s["symbol_a"], s["symbol_b"], s["sector"], s["spread_zscore"],
-              s["correlation_60d"], s["cointegration_pvalue"], s["hedge_ratio"], s["half_life_days"],
-              s["pairs_score"], s["direction"], s["runner_symbol"], s["runner_tech_score"],
-              s["runner_fund_score"], s["narrative"], s["status"]) for s in signals])
+            [(_c(s["date"]), _c(s["signal_type"]), _c(s["symbol_a"]), _c(s["symbol_b"]), _c(s["sector"]),
+              _c(s["spread_zscore"]), _c(s["correlation_60d"]), _c(s["cointegration_pvalue"]),
+              _c(s["hedge_ratio"]), _c(s["half_life_days"]), _c(s["pairs_score"]), _c(s["direction"]),
+              _c(s["runner_symbol"]), _c(s["runner_tech_score"]), _c(s["runner_fund_score"]),
+              _c(s["narrative"]), _c(s["status"])) for s in signals])
 
 
 def run():

@@ -460,7 +460,15 @@ export default function AlphaStack() {
     setSelected(null);
     fetch(`${API}/api/alpha/stack?min_gate=${minGate}`)
       .then(r => r.json())
-      .then(d => { setData(d); setLoading(false); })
+      .then(d => {
+        if (Array.isArray(d)) {
+          setData(d);
+        } else {
+          setError((d as { detail?: string; error?: string }).detail || (d as { error?: string }).error || 'API error');
+          setData([]);
+        }
+        setLoading(false);
+      })
       .catch(e => { setError(e.message); setLoading(false); });
   }, [minGate]);
 
