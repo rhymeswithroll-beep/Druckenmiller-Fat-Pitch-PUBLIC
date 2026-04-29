@@ -210,7 +210,7 @@ def run(symbols=None):
         "SELECT DISTINCT symbol FROM fundamentals WHERE metric = 'forensic_score'"
     )}
     recent_earnings = {r["symbol"] for r in query(
-        "SELECT DISTINCT symbol FROM earnings_calendar WHERE date >= (CURRENT_DATE - INTERVAL '45 days')::text"
+        "SELECT DISTINCT symbol FROM earnings_calendar WHERE date >= date('now', '-45 days')"
     )}
     # Re-run if: no cached score, OR recent earnings (annual financials changed)
     symbols = [s for s in symbols if s not in cached or s in recent_earnings]

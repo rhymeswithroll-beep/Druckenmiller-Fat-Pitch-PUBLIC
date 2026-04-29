@@ -77,6 +77,7 @@ def fetch_news_sentiment(client, symbols):
 
             rows.append((
                 symbol, today,
+                "aggregated",        # headline — required NOT NULL PK; this row is daily aggregate
                 bear_pct, bull_pct, buzz_score,
                 float(len(news)),
                 len(news),
@@ -179,7 +180,8 @@ def run():
     if sentiment_rows:
         upsert_many(
             "news_sentiment",
-            ["symbol", "date", "bearish_pct", "bullish_pct",
+            ["symbol", "date", "headline",
+             "bearish_pct", "bullish_pct",
              "buzz_score", "articles_count", "total_news_7d"],
             sentiment_rows
         )

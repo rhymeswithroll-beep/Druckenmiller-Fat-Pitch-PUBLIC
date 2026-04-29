@@ -1129,11 +1129,13 @@ def _get_sa_engine():
     return _sa_engine
 
 def query_df(sql, params=None):
-    """Execute SQL and return a pandas DataFrame. Accepts both ? and %s placeholders."""
+    """Execute SQL and return a pandas DataFrame.
+    Routes LOCAL_TABLES to SQLite (same as query()); all others to Neon via psycopg2."""
     import pandas as _pd
-    from sqlalchemy import text
-    with _get_sa_engine().connect() as conn:
-        return _pd.read_sql_query(text(_to_pg(sql)), conn, params=params)
+    rows = query(sql, params)
+    if not rows:
+        return _pd.DataFrame()
+    return _pd.DataFrame(rows)
 
 
 def upsert_many(table, columns, rows):

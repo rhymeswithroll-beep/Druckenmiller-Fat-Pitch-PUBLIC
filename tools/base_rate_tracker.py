@@ -20,11 +20,16 @@ def log_signals():
     symbols = [s["symbol"] for s in signals]
     ph = ",".join("?" * len(symbols))
     price_map = {r["symbol"]: r["close"] for r in query(f"SELECT p.symbol, p.close FROM price_data p INNER JOIN (SELECT symbol, MAX(date) as mx FROM price_data WHERE symbol IN ({ph}) AND close IS NOT NULL GROUP BY symbol) m ON p.symbol = m.symbol AND p.date = m.mx", symbols)}
+    # stock_universe (SQLite) and fundamentals (Neon) can't be cross-joined — do two queries
+    sector_map = {r["symbol"]: r["sector"] for r in query(f"SELECT symbol, sector FROM stock_universe WHERE symbol IN ({ph})", symbols)}
+    mcap_map = {r["symbol"]: r["value"] for r in query(f"SELECT symbol, value FROM fundamentals WHERE metric = 'marketCap' AND symbol IN ({ph})", symbols)}
     meta_map = {}
-    for r in query(f"SELECT su.symbol, su.sector, f.value as marketCap FROM stock_universe su LEFT JOIN fundamentals f ON f.symbol = su.symbol AND f.metric = 'marketCap' WHERE su.symbol IN ({ph})", symbols):
-        mcap = r["marketcap"]
+    for sym in symbols:
+        mcap = mcap_map.get(sym)
+        try: mcap = float(mcap) if mcap is not None else None
+        except (TypeError, ValueError): mcap = None
         cap_bucket = "mega" if mcap and mcap > 200e9 else "large" if mcap and mcap > 10e9 else "mid" if mcap and mcap > 2e9 else "small" if mcap else None
-        meta_map[r["symbol"]] = (r["sector"], cap_bucket)
+        meta_map[sym] = (sector_map.get(sym), cap_bucket)
     da_map = {r["symbol"]: (r["risk_score"], r["warning_flag"]) for r in query(f"SELECT symbol, risk_score, warning_flag FROM devils_advocate WHERE date = ? AND symbol IN ({ph})", [today] + symbols)}
     logged = 0
     with get_conn() as conn:
