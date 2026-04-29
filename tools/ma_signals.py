@@ -252,10 +252,8 @@ _COLS = ("symbol","date","ma_score","target_profile_score","rumor_score","valuat
 def _write(signals, rum_scores):
     today_str = date.today().isoformat()
     if signals:
-        with get_conn() as conn:
-            conn.execute("DELETE FROM ma_signals WHERE date=?",[today_str])
-            conn.executemany(f"INSERT INTO ma_signals ({','.join(_COLS)}) VALUES ({','.join('?'*len(_COLS))})",
-                [tuple(s[c] for c in _COLS) for s in signals])
+        rows = [tuple(s[c] for c in _COLS) for s in signals]
+        upsert_many("ma_signals", list(_COLS), rows)
     if rum_scores:
         import json as _json
         rows = [(sym,today_str,d.get("source",""),d.get("best_headline",""),d.get("credibility",0),
@@ -303,9 +301,10 @@ def run():
     else: print("  Skipping rumor scan (missing API keys)")
     print("  [3/3] Final M&A scores...")
     signals = _final_scores(tgt_scores, rum_scores)
-    _write(signals, rum_scores)
     high = sorted([s for s in signals if s["ma_score"]>=50], key=lambda x:x["ma_score"], reverse=True)
-    print(f"  Total: {len(signals)} signals, {len(high)} above 50")
+    print(f"  Total: {len(signals)} signals, {len(high)} above 50 — writing to DB...")
+    _write(signals, rum_scores)
+    print(f"  Written.")
     for sym,d in sorted(rum_scores.items(), key=lambda x:x[1]["rumor_score"], reverse=True)[:5]:
         print(f"    {sym:6s} cred={d['credibility']}/10 stage={d['deal_stage']} score={d['rumor_score']:.0f}")
     for s in high[:10]:
