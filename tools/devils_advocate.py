@@ -23,7 +23,7 @@ from datetime import date, timedelta
 import anthropic
 
 from tools.config import (
-    ANTHROPIC_API_KEY, CLAUDE_MODEL,
+    ANTHROPIC_API_KEY, CLAUDE_SONNET_MODEL,
     DA_MAX_SIGNALS, DA_WARNING_THRESHOLD, DA_GEMINI_TEMPERATURE,
 )
 from tools.db import init_db, get_conn, query, upsert_many
@@ -129,8 +129,8 @@ def _call_claude(prompt: str) -> dict | None:
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=768,
+            model=CLAUDE_SONNET_MODEL,
+            max_tokens=1024,
             temperature=DA_GEMINI_TEMPERATURE,
             messages=[{"role": "user", "content": prompt}],
         )
