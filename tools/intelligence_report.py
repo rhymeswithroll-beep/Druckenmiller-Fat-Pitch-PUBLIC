@@ -2,13 +2,13 @@
 
 import json, logging, re, time
 from datetime import date
-import requests
-from tools.config import GEMINI_API_KEY, GEMINI_BASE, GEMINI_MODEL
+import anthropic
+from tools.config import ANTHROPIC_API_KEY, CLAUDE_MODEL
 from tools.db import init_db, query, upsert_many
 
 logger = logging.getLogger(__name__)
 MEMO_MAX_SIGNALS = 15
-MEMO_GEMINI_TEMPERATURE = 0.3
+MEMO_TEMPERATURE = 0.3
 MEMO_MIN_CONVERGENCE = 40.0
 
 
@@ -138,15 +138,20 @@ Write a concise memo as JSON: {{"thesis":"<2-3 sentences>","signal_summary":"<3-
 Rules: Ground every claim in data above. Reference specific scores. Bear case must be genuine. Be direct."""
 
 
-def _call_gemini_memo(prompt: str) -> dict | None:
-    if not GEMINI_API_KEY: return None
+def _call_claude_memo(prompt: str) -> dict | None:
+    if not ANTHROPIC_API_KEY: return None
     try:
-        resp = requests.post(f"{GEMINI_BASE}/models/{GEMINI_MODEL}:generateContent",
-            headers={"Content-Type": "application/json"}, params={"key": GEMINI_API_KEY},
-            json={"contents": [{"parts": [{"text": prompt}]}],
-                  "generationConfig": {"temperature": MEMO_GEMINI_TEMPERATURE, "maxOutputTokens": 4096}}, timeout=60)
-        resp.raise_for_status()
-        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=2048,
+            temperature=MEMO_TEMPERATURE,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text.strip()
+        # Strip markdown code fences if present
+        text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.MULTILINE)
+        text = re.sub(r'\s*```$', '', text, flags=re.MULTILINE)
         m = re.search(r"\{[\s\S]*\}", text)
         if m:
             parsed = json.loads(m.group())
@@ -154,7 +159,7 @@ def _call_gemini_memo(prompt: str) -> dict | None:
                 return parsed
         return None
     except Exception as e:
-        logger.error(f"Gemini memo call failed: {e}"); return None
+        logger.error(f"Claude memo call failed: {e}"); return None
 
 
 def _fmt_pct(val):
@@ -232,7 +237,7 @@ def generate_memo(symbol: str) -> dict | None:
         "conv_convergence_score": conv.get("convergence_score"), "conv_module_count": conv.get("module_count"),
         "tech_total_score": data.get("technicals", {}).get("total_score")}
     citations = verifier.build_citation_block(citation_data)
-    memo = _call_gemini_memo(_build_memo_prompt(data))
+    memo = _call_claude_memo(_build_memo_prompt(data))
     if not memo: return None
     html = render_memo_html(symbol, memo, data, citations)
     regime = data.get("regime", {}).get("regime", "neutral")
