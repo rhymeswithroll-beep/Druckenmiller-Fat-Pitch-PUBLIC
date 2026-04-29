@@ -227,6 +227,9 @@ def main():
         print(f"\n  ✓ Data freshness OK: {price_count} price rows for today")
 
     # ── Phase 2: Scoring ──
+    from tools.market_breadth import run as run_breadth
+    _run_phase("Phase 2.0: Market Breadth", run_breadth)
+
     from tools.technical_scoring import run as score_technical
     _run_phase("Phase 2.1: Technical Scoring", score_technical)
 
