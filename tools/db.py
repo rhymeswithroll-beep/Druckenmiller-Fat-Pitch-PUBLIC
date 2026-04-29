@@ -34,6 +34,8 @@ LOCAL_TABLES = frozenset({
     "earnings_calendar",    # Pipeline-internal lookup only
     "insider_transactions", # 14K+ rows, upserted fresh every run — Neon killer
     "insider_signals",      # Module-internal output, read back by same module
+    "edgar_insider_raw",    # EDGAR Form 4 XML parsed transactions — feeds insider_transactions
+    "edgar_filing_metadata",# EDGAR Form 4 filing metadata — daily refresh, local only
     "foreign_ticker_map",   # Static ~80-row ADR map; Neon pooler intermittently loses DDL
 })
 
@@ -491,7 +493,7 @@ TABLE_PKS: dict[str, list[str]] = {
     "fmp_institutional":           ["symbol", "date"],
     "stocktwits_sentiment":        ["symbol", "date"],
     "coingecko_data":              ["asset", "date"],
-    "edgar_insider_raw":           ["accession"],
+    "edgar_insider_raw":           ["accession", "owner_name"],
     "edgar_filing_metadata":       ["accession"],
     "av_technical_indicators":     ["symbol", "date"],
     "finra_short_interest":        ["symbol", "date"],
@@ -658,7 +660,7 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS fmp_institutional (symbol TEXT, date TEXT, institutional_pct REAL, institution_count INTEGER, PRIMARY KEY (symbol, date))""",
             """CREATE TABLE IF NOT EXISTS stocktwits_sentiment (symbol TEXT, date TEXT, bull_pct REAL, bear_pct REAL, msg_count INTEGER, sentiment_score REAL, PRIMARY KEY (symbol, date))""",
             """CREATE TABLE IF NOT EXISTS coingecko_data (asset TEXT, date TEXT, price REAL, volume REAL, market_cap REAL, dominance_pct REAL, fear_greed_idx REAL, price_change_24h REAL, price_change_7d REAL, PRIMARY KEY (asset, date))""",
-            """CREATE TABLE IF NOT EXISTS edgar_insider_raw (accession TEXT PRIMARY KEY, symbol TEXT, date TEXT, filer_name TEXT, title TEXT, transaction_type TEXT, shares REAL, price REAL, value REAL, form_type TEXT, filing_url TEXT)""",
+            """CREATE TABLE IF NOT EXISTS edgar_insider_raw (accession TEXT, owner_name TEXT, symbol TEXT, date TEXT, title TEXT, transaction_type TEXT, shares REAL, price REAL, value REAL, shares_owned_after REAL, form_type TEXT, filing_url TEXT, PRIMARY KEY (accession, owner_name))""",
             """CREATE TABLE IF NOT EXISTS edgar_filing_metadata (accession TEXT PRIMARY KEY, symbol TEXT, date TEXT, form_type TEXT, filer_name TEXT, filing_url TEXT, description TEXT)""",
             """CREATE TABLE IF NOT EXISTS av_technical_indicators (symbol TEXT, date TEXT, rsi REAL, macd REAL, macd_signal REAL, macd_hist REAL, stoch_k REAL, stoch_d REAL, adx REAL, bb_upper REAL, bb_middle REAL, bb_lower REAL, bb_width REAL, obv REAL, PRIMARY KEY (symbol, date))""",
             """CREATE TABLE IF NOT EXISTS finra_short_interest (symbol TEXT, date TEXT, short_volume REAL, total_volume REAL, short_vol_ratio REAL, short_interest REAL, days_to_cover REAL, PRIMARY KEY (symbol, date))""",
