@@ -166,6 +166,7 @@ def main():
 
     # Pre-import all fetcher modules before threading (avoids import-lock issues)
     from tools.fetch_fmp_v2 import run as fetch_fmp_v2
+    from tools.fetch_analyst_yf import run as fetch_analyst_yf
     from tools.fetch_stocktwits import run as fetch_stocktwits
     from tools.fetch_coingecko import run as fetch_coingecko
     from tools.fetch_sec_edgar import run as fetch_edgar
@@ -182,6 +183,7 @@ def main():
 
     parallel_phases = [
         ("Phase 1.6: FMP v2 (short interest, analyst, DCF, institutional)", fetch_fmp_v2),
+        ("Phase 1.6b: Analyst Recs & Price Targets (yfinance)", fetch_analyst_yf),
         ("Phase 1.7: Stocktwits Retail Sentiment", fetch_stocktwits),
         ("Phase 1.8: CoinGecko Crypto Data", fetch_coingecko),
         ("Phase 1.9: SEC EDGAR (Form 4 + 13F metadata)", fetch_edgar),
