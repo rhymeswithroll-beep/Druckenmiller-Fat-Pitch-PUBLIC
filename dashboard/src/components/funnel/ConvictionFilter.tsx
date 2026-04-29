@@ -25,11 +25,29 @@ function convictionBadge(level: string) {
   );
 }
 
+const CONVICTION_RANK: Record<string, number> = { HIGH: 0, NOTABLE: 1, WATCH: 2 };
+
+function exportCSV(rows: any[]) {
+  const cols = ['symbol', 'company_name', 'sector', 'conviction_level', 'convergence_score', 'module_count', 'signal', 'rr_ratio', 'narrative'];
+  const header = cols.join(',');
+  const lines = rows.map(r =>
+    cols.map(c => {
+      const v = c === 'conviction_level' ? (r.effective_conviction ?? r.conviction_level ?? 'WATCH') : (r[c] ?? '');
+      return `"${String(v).replace(/"/g, '""')}"`;
+    }).join(',')
+  );
+  const blob = new Blob([header + '\n' + lines.join('\n')], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url;
+  a.download = `druckenmiller_signals_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
 export default function ConvictionFilter({ onSymbolClick }: Props) {
   const [assets, setAssets] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
-  const [filterConviction, setFilterConviction] = useState<string>('');
+  const [filterConviction, setFilterConviction] = useState<string>('HIGH');
 
   useEffect(() => {
     api.funnelStage(5).then(setAssets).finally(() => setLoading(false));
@@ -37,9 +55,16 @@ export default function ConvictionFilter({ onSymbolClick }: Props) {
 
   if (loading) return <div className="text-gray-400 text-sm p-8 text-center">Loading conviction data...</div>;
 
+  const sorted = [...assets].sort((a, b) => {
+    const ca = CONVICTION_RANK[a.effective_conviction ?? a.conviction_level ?? 'WATCH'] ?? 2;
+    const cb = CONVICTION_RANK[b.effective_conviction ?? b.conviction_level ?? 'WATCH'] ?? 2;
+    if (ca !== cb) return ca - cb;
+    return (b.best_score ?? b.convergence_score ?? 0) - (a.best_score ?? a.convergence_score ?? 0);
+  });
+
   const filtered = filterConviction
-    ? assets.filter(s => (s.effective_conviction ?? s.conviction_level ?? 'WATCH') === filterConviction)
-    : assets;
+    ? sorted.filter(s => (s.effective_conviction ?? s.conviction_level ?? 'WATCH') === filterConviction)
+    : sorted;
 
   return (
     <div className="space-y-3">
@@ -60,6 +85,12 @@ export default function ConvictionFilter({ onSymbolClick }: Props) {
           </button>
         ))}
         <span className="ml-auto text-[10px] text-gray-400">{filtered.length} assets</span>
+        <button
+          onClick={() => exportCSV(filtered)}
+          className="text-[10px] px-2.5 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 transition-colors font-semibold tracking-wide"
+        >
+          ↓ Export CSV
+        </button>
       </div>
 
       {/* Stock list */}
