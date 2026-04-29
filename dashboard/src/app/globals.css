@@ -227,6 +227,14 @@ code, kbd, pre, .font-mono {
     50% { opacity: 1; }
   }
 
+  @keyframes slide-in-right {
+    from { transform: translateX(100%); opacity: 0; }
+    to   { transform: translateX(0);    opacity: 1; }
+  }
+  .animate-slide-in-right {
+    animation: slide-in-right 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
   /* ═══ Scrollbar Hide (for horizontal scroll strips) ═══ */
   .scrollbar-hide {
     -ms-overflow-style: none;

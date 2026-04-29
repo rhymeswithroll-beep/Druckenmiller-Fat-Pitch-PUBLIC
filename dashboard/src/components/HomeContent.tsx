@@ -146,7 +146,7 @@ export default function HomeContent() {
           ))}
         </div>}
       </div>}
-      <div><div className="flex items-center justify-between mb-3"><h2 className="text-[11px] font-semibold text-gray-500 tracking-widest uppercase">Convergence Heatmap</h2><a href="/synthesis" className="text-[10px] text-gray-400 hover:text-emerald-600 transition-colors">Full view</a></div>
+      <div><div className="flex items-center justify-between mb-3"><h2 className="text-[11px] font-semibold text-gray-500 tracking-widest uppercase">Conviction Signals</h2><a href="/synthesis" className="text-[10px] text-gray-400 hover:text-emerald-600 transition-colors">Full view</a></div>
         {convergence.length > 0 ? <ConvergenceHeatmap data={convergence} /> : <div className="panel p-6 text-center text-[11px] text-gray-400">Convergence data unavailable. Pipeline may be initializing.</div>}
       </div>
     </div>

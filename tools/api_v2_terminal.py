@@ -24,7 +24,14 @@ def terminal_feed():
     """
     # 1. Macro regime
     macro = query("SELECT * FROM macro_scores ORDER BY date DESC LIMIT 1")
-    macro_data = macro[0] if macro else {}
+    macro_data = dict(macro[0]) if macro else {}
+    # Enrich with actual VIX level and DXY from price_data (LOCAL_TABLE)
+    seen_px: dict = {}
+    for r in query("SELECT symbol, close FROM price_data WHERE symbol IN ('^VIX','DX-Y.NYB') AND close IS NOT NULL ORDER BY date DESC LIMIT 4"):
+        if r["symbol"] not in seen_px:
+            seen_px[r["symbol"]] = r["close"]
+    macro_data["vix_level"] = round(seen_px["^VIX"], 1) if "^VIX" in seen_px else None
+    macro_data["dxy_level"] = round(seen_px["DX-Y.NYB"], 2) if "DX-Y.NYB" in seen_px else None
 
     # 2. Market breadth
     breadth = query("SELECT * FROM market_breadth ORDER BY date DESC LIMIT 1")
@@ -205,27 +212,34 @@ def terminal_feed():
     # 8. M&A intelligence — top targets + recent rumors
     ma_intel = []
     try:
-        ma_intel = query("""
-            SELECT m.symbol, m.ma_score, m.deal_stage,
-                   m.details, m.date,
-                   u.name as company_name, u.sector
-            FROM ma_signals m
-            LEFT JOIN stock_universe u ON m.symbol = u.symbol
-            WHERE m.date::date >= CURRENT_DATE - INTERVAL '30 days'
-            AND m.ma_score >= 30
-            ORDER BY m.ma_score DESC
+        ma_rows = query("""
+            SELECT symbol, ma_score, deal_stage, narrative, date
+            FROM ma_signals
+            WHERE date >= (SELECT MAX(date) FROM ma_signals)
+            AND ma_score >= 15
+            ORDER BY ma_score DESC
             LIMIT 20
         """)
+        # Enrich with company name + sector from SQLite
+        if ma_rows:
+            syms = [r["symbol"] for r in ma_rows]
+            ph = ",".join("?" * len(syms))
+            uni = query(f"SELECT symbol, name, sector FROM stock_universe WHERE symbol IN ({ph})", syms)
+            uni_map = {r["symbol"]: r for r in uni}
+            ma_intel = [dict(r, company_name=uni_map.get(r["symbol"], {}).get("name"), sector=uni_map.get(r["symbol"], {}).get("sector")) for r in ma_rows]
+        else:
+            ma_intel = []
     except Exception as e:
         logger.warning("ma_signals query failed: %s", e)
 
     ma_rumors = []
     try:
         ma_rumors = query("""
-            SELECT symbol, headline, credibility, date, source
+            SELECT symbol, rumor_headline as headline, credibility_score as credibility, date, rumor_source as source,
+                   acquirer_name, expected_premium_pct
             FROM ma_rumors
-            WHERE date::date >= CURRENT_DATE - INTERVAL '14 days'
-            ORDER BY credibility DESC, date DESC
+            WHERE date >= date('now', '-60 days')
+            ORDER BY credibility_score DESC, date DESC
             LIMIT 10
         """)
     except Exception as e:
@@ -296,9 +310,10 @@ def market_headlines():
             client = finnhub.Client(api_key=FINNHUB_API_KEY)
             # Get top 8 conviction symbols from convergence_signals
             top_symbols = query("""
-                SELECT DISTINCT symbol FROM convergence_signals
+                SELECT symbol, MAX(convergence_score) as convergence_score FROM convergence_signals
                 WHERE date = (SELECT MAX(date) FROM convergence_signals)
                 AND conviction_level IN ('HIGH', 'NOTABLE')
+                GROUP BY symbol
                 ORDER BY convergence_score DESC
                 LIMIT 8
             """)
@@ -476,3 +491,73 @@ def stock_panel(symbol: str):
         "delisted": delisted,
     }
     return result
+
+
+@router.get("/api/v2/sector/{sector}")
+def sector_detail(sector: str):
+    """Drill-down: all stocks in a sector ranked by composite score."""
+    # 1. Get symbols + names from SQLite
+    universe = query(
+        "SELECT symbol, name FROM stock_universe WHERE sector = ? ORDER BY symbol",
+        [sector]
+    )
+    if not universe:
+        return {"sector": sector, "stocks": []}
+
+    syms = [r["symbol"] for r in universe]
+    name_map = {r["symbol"]: r["name"] for r in universe}
+
+    # 2. Get latest signals from Neon (cross-DB: split query)
+    ph = ",".join(["%s"] * len(syms))
+    sig_rows = query(
+        f"""SELECT symbol, composite_score, signal, rr_ratio, entry_price, stop_loss, target_price
+            FROM signals
+            WHERE symbol IN ({ph})
+            AND date = (SELECT MAX(date) FROM signals)
+            ORDER BY composite_score DESC NULLS LAST""",
+        syms
+    )
+
+    # 3. Get conviction levels from convergence_signals (Neon)
+    conv_rows = query(
+        f"SELECT symbol, convergence_score, conviction_level FROM convergence_signals WHERE symbol IN ({ph}) AND date = (SELECT MAX(date) FROM convergence_signals)",
+        syms
+    )
+    conv_map = {r["symbol"]: r for r in conv_rows}
+
+    stocks = []
+    seen = set()
+    for r in sig_rows:
+        sym = r["symbol"]
+        seen.add(sym)
+        conv = conv_map.get(sym, {})
+        stocks.append({
+            "symbol": sym,
+            "name": name_map.get(sym, ""),
+            "composite_score": r["composite_score"],
+            "signal": r["signal"],
+            "rr_ratio": r["rr_ratio"],
+            "conviction_level": conv.get("conviction_level") or r.get("conviction_level"),
+            "convergence_score": conv.get("convergence_score"),
+            "entry_price": r["entry_price"],
+            "stop_loss": r["stop_loss"],
+            "target_price": r["target_price"],
+        })
+
+    # Add any universe stocks with no signal
+    for sym in syms:
+        if sym not in seen:
+            stocks.append({
+                "symbol": sym,
+                "name": name_map.get(sym, ""),
+                "composite_score": None,
+                "signal": None,
+                "rr_ratio": None,
+                "conviction_level": None,
+                "convergence_score": None,
+                "entry_price": None,
+                "stop_loss": None,
+                "target_price": None,
+            })
+
+    return {"sector": sector, "stock_count": len(stocks), "stocks": stocks}

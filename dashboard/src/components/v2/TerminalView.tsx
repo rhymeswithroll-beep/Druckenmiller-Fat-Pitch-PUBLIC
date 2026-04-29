@@ -5,6 +5,7 @@ import { useStockPanel } from '@/contexts/StockPanelContext';
 import { fmtM, fmtTopBuyer } from '@/lib/utils';
 import { Tooltip, InfoTip } from '@/components/shared/Tooltip';
 import { MACRO_DEFS, BREADTH_DEFS } from '@/lib/definitions';
+import SectorDrillDown from '@/components/v2/SectorDrillDown';
 
 interface Headline {
   headline: string;
@@ -135,17 +136,26 @@ export default function TerminalView() {
   const [refreshed, setRefreshed] = useState<Date | null>(null);
   const [rightTab, setRightTab] = useState<RightTab>('insider');
   const [econCat, setEconCat] = useState<EconCat>('ALL');
+  const [selectedSector, setSelectedSector] = useState<string | null>(null);
   const { open: openStock } = useStockPanel();
 
-  const load = () => {
-    setLoading(true);
+  const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const load = useCallback((isRetry = false) => {
+    if (!isRetry) setLoading(true);
     fetch('/api/v2/terminal')
       .then(r => r.json())
       .then(d => { setData(d); setRefreshed(new Date()); setLoading(false); })
-      .catch(() => setLoading(false));
-  };
+      .catch(() => {
+        // Auto-retry every 3s until the API is reachable
+        retryRef.current = setTimeout(() => load(true), 3000);
+      });
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    return () => { if (retryRef.current) clearTimeout(retryRef.current); };
+  }, [load]);
 
   if (loading) return (
     <div className="flex-1 animate-pulse p-6 space-y-3">
@@ -156,7 +166,7 @@ export default function TerminalView() {
     </div>
   );
 
-  if (!data) return <div className="flex items-center justify-center h-64 text-gray-400 text-sm">Cannot connect to backend</div>;
+  if (!data) return <div className="flex items-center justify-center h-64 text-gray-400 text-sm animate-pulse">Connecting to backend...</div>;
 
   const macro            = data.macro            ?? {};
   const breadth          = data.breadth          ?? {};
@@ -169,7 +179,8 @@ export default function TerminalView() {
   const ma_rumors        = data.ma_rumors        ?? [];
   const energy_anomalies = data.energy_anomalies ?? [];
   const pipeline         = data.pipeline         ?? {};
-  const macroScore = macro?.total_score ?? macro?.regime_score ?? 0;
+  const macroRaw = macro?.total_score ?? macro?.regime_score ?? 0;
+  const macroScore = Math.round((macroRaw + 100) / 2); // normalize -100..+100 → 0..100
 
   // Right panel stats
   const clusterCount   = insider_flow.filter((t: any) => !!t.cluster_buy).length;
@@ -182,6 +193,7 @@ export default function TerminalView() {
   const filteredEcon = econCat === 'ALL' ? key_indicators : key_indicators.filter((i: any) => i.category === econCat);
 
   return (
+    <>
     <div className="flex flex-col h-full overflow-hidden bg-gray-50">
 
       {/* ── Header bar ── */}
@@ -214,19 +226,43 @@ export default function TerminalView() {
 
             {/* Key macro stats */}
             <div className="flex items-center gap-4 text-[10px]">
-              {[
-                { label: 'MACRO', val: macroScore },
-                { label: 'VIX', val: macro?.vix_score },
-                { label: 'YIELD CURVE', val: macro?.yield_curve_score },
-                { label: 'CREDIT', val: macro?.credit_spreads_score },
-              ].filter(x => x.val != null).map(({ label, val }) => (
-                <span key={label} className="flex items-center gap-1">
-                  <span className="text-gray-400 tracking-wider">{label}</span>
-                  <span className={`font-mono font-bold ${(val as number) >= 55 ? 'text-emerald-700' : (val as number) >= 40 ? 'text-amber-600' : 'text-rose-600'}`}>
-                    {(val as number).toFixed(0)}
-                  </span>
-                </span>
-              ))}
+              {(() => {
+                const vixLevel = macro?.vix_level;
+                const vixColor = vixLevel == null ? 'text-gray-400' : vixLevel < 15 ? 'text-emerald-700' : vixLevel < 20 ? 'text-amber-600' : vixLevel < 30 ? 'text-orange-600' : 'text-rose-600';
+                const ycScore = macro?.yield_curve_score;
+                const ycColor = ycScore == null ? 'text-gray-400' : ycScore > 0 ? 'text-emerald-700' : ycScore === 0 ? 'text-amber-600' : 'text-rose-600';
+                const crScore = macro?.credit_spreads_score;
+                const crColor = crScore == null ? 'text-gray-400' : crScore > 0 ? 'text-emerald-700' : crScore === 0 ? 'text-amber-600' : 'text-rose-600';
+                return (
+                  <>
+                    <span className="flex items-center gap-1">
+                      <span className="text-gray-400 tracking-wider">MACRO</span>
+                      <span className={`font-mono font-bold ${macroScore >= 55 ? 'text-emerald-700' : macroScore >= 40 ? 'text-amber-600' : 'text-rose-600'}`}>{macroScore}</span>
+                      <span className="text-gray-400 text-[9px]">/100</span>
+                    </span>
+                    {vixLevel != null && (
+                      <span className="flex items-center gap-1">
+                        <span className="text-gray-400 tracking-wider">VIX</span>
+                        <span className={`font-mono font-bold ${vixColor}`}>{vixLevel.toFixed(1)}</span>
+                      </span>
+                    )}
+                    {ycScore != null && (
+                      <span className="flex items-center gap-1">
+                        <span className="text-gray-400 tracking-wider">YIELD CURVE</span>
+                        <span className={`font-mono font-bold ${ycColor}`}>{ycScore > 0 ? '+' : ''}{ycScore.toFixed(0)}</span>
+                        <span className="text-gray-400 text-[9px]">pts</span>
+                      </span>
+                    )}
+                    {crScore != null && (
+                      <span className="flex items-center gap-1">
+                        <span className="text-gray-400 tracking-wider">CREDIT</span>
+                        <span className={`font-mono font-bold ${crColor}`}>{crScore > 0 ? '+' : ''}{crScore.toFixed(0)}</span>
+                        <span className="text-gray-400 text-[9px]">pts</span>
+                      </span>
+                    )}
+                  </>
+                );
+              })()}
 
               {/* Breadth */}
               {breadth?.breadth_score != null && (
@@ -278,8 +314,8 @@ export default function TerminalView() {
                 <Tooltip text={MACRO_DEFS.overall} width="w-72">
                   <span className="text-[10px] text-gray-400 uppercase tracking-wider">Macro Score</span>
                 </Tooltip>
-                <span className={`text-2xl font-bold font-mono ${macroScore >= 30 ? 'text-emerald-600' : macroScore >= 10 ? 'text-amber-600' : 'text-rose-600'}`}>
-                  {macroScore > 0 ? '+' : ''}{macroScore.toFixed(0)}
+                <span className={`text-2xl font-bold font-mono ${macroRaw >= 30 ? 'text-emerald-600' : macroRaw >= 0 ? 'text-amber-600' : 'text-rose-600'}`}>
+                  {macroRaw > 0 ? '+' : ''}{macroRaw.toFixed(0)}
                 </span>
               </div>
               <div className="text-[10px] text-gray-400 mb-3">Sum of signed components · green = bullish · &gt;+30 risk-on</div>
@@ -443,10 +479,14 @@ export default function TerminalView() {
                         const barColor = score >= 55 ? 'bg-emerald-400' : score >= 45 ? 'bg-amber-400' : 'bg-rose-300';
                         const scoreColor = score >= 55 ? 'text-emerald-700 font-bold' : score >= 45 ? 'text-amber-700' : 'text-rose-600';
                         return (
-                          <tr key={sec.sector} className={`border-b border-gray-50 last:border-0 ${i === 0 ? 'bg-emerald-50/40' : ''}`}>
+                          <tr
+                            key={sec.sector}
+                            className={`border-b border-gray-50 last:border-0 cursor-pointer hover:bg-emerald-50/60 transition-colors ${i === 0 ? 'bg-emerald-50/40' : ''}`}
+                            onClick={() => setSelectedSector(sec.sector)}
+                          >
                             <td className="px-3 py-2">
-                              <span className="text-[10px] text-gray-800">{sec.sector}</span>
-                              <span className="text-[10px] text-gray-400 ml-1.5">({sec.stock_count})</span>
+                              <span className="text-[10px] text-gray-800 group-hover:text-emerald-700">{sec.sector}</span>
+                              <span className="text-[10px] text-emerald-600 ml-1.5 font-semibold hover:underline">({sec.stock_count})</span>
                             </td>
                             <td className={`px-3 py-2 text-right text-[11px] font-mono ${scoreColor}`}>{score.toFixed(1)}</td>
                             <td className="px-2 py-2 text-right text-[10px] font-mono text-emerald-600">{sec.bull_count || 0}</td>
@@ -720,5 +760,14 @@ export default function TerminalView() {
         </div>
       </div>
     </div>
+
+    {/* Sector drill-down panel */}
+    {selectedSector && (
+      <SectorDrillDown
+        sector={selectedSector}
+        onClose={() => setSelectedSector(null)}
+      />
+    )}
+    </>
   );
 }

@@ -37,6 +37,8 @@ LOCAL_TABLES = frozenset({
     "edgar_insider_raw",    # EDGAR Form 4 XML parsed transactions — feeds insider_transactions
     "edgar_filing_metadata",# EDGAR Form 4 filing metadata — daily refresh, local only
     "foreign_ticker_map",   # Static ~80-row ADR map; Neon pooler intermittently loses DDL
+    "ma_signals",           # M&A target scoring — written and read locally
+    "ma_rumors",            # M&A rumor headlines — written and read locally
 })
 
 

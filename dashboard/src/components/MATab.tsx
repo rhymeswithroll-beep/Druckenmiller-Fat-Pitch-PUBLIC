@@ -27,7 +27,7 @@ export default function MATab() {
       <div className="grid grid-cols-3 gap-3">
         <div onClick={() => setTab('targets')} className={`panel px-4 py-3 cursor-pointer transition-all ${tab === 'targets' ? 'border-emerald-600/50' : 'hover:border-gray-300'}`}><div className="text-2xl font-display font-bold text-emerald-600">{signals.filter(s => s.ma_score >= 50).length}</div><div className="text-[10px] text-gray-500 tracking-widest mt-1">HIGH M&A SCORE</div></div>
         <div onClick={() => setTab('rumors')} className={`panel px-4 py-3 cursor-pointer transition-all ${tab === 'rumors' ? 'border-emerald-600/50' : 'hover:border-gray-300'}`}><div className="text-2xl font-display font-bold text-amber-600">{rumors.length}</div><div className="text-[10px] text-gray-500 tracking-widest mt-1">ACTIVE RUMORS</div></div>
-        <div className="panel px-4 py-3"><div className="text-2xl font-display font-bold text-blue-600">{signals.filter(s => s.deal_stage === 'definitive').length}</div><div className="text-[10px] text-gray-500 tracking-widest mt-1">DEFINITIVE DEALS</div></div>
+        <div className="panel px-4 py-3"><div className="text-2xl font-display font-bold text-blue-600">{signals.filter(s => s.deal_stage?.toUpperCase().includes('DEFINITIVE')).length}</div><div className="text-[10px] text-gray-500 tracking-widest mt-1">DEFINITIVE DEALS</div></div>
       </div>
       {tab === 'targets' && (
         <div className="panel overflow-hidden"><div className="px-4 py-3 border-b border-gray-200"><h2 className="text-xs text-gray-900 tracking-widest font-bold">TOP M&A TARGETS</h2></div>
@@ -36,7 +36,7 @@ export default function MATab() {
               <tr key={`ma-${s.symbol}-${i}`} className="border-b border-gray-200/50 hover:bg-emerald-600/[0.03] cursor-pointer" onClick={() => (window.location.href = `/asset/${s.symbol}`)}>
                 <td className="py-2.5 px-4 font-mono font-bold text-emerald-600">{s.symbol}{s.company_name && <span className="ml-2 text-[10px] text-gray-500">{s.company_name}</span>}</td>
                 <td className="py-2.5 px-2 text-right"><span className="px-1.5 py-0.5 rounded-lg text-[10px] font-bold" {...scorePillSty(s.ma_score)}>{s.ma_score.toFixed(0)}</span></td>
-                <td className="py-2.5 px-2 text-center">{s.deal_stage && <span className={`px-1.5 py-0.5 rounded-lg text-[10px] font-bold uppercase ${s.deal_stage === 'definitive' ? 'bg-emerald-600/15 text-emerald-600' : 'bg-amber-600/15 text-amber-600'}`}>{s.deal_stage}</span>}</td>
+                <td className="py-2.5 px-2 text-center">{s.deal_stage && <span className={`px-1.5 py-0.5 rounded-lg text-[10px] font-bold uppercase ${s.deal_stage?.toUpperCase().includes('DEFINITIVE') ? 'bg-emerald-600/15 text-emerald-600' : 'bg-amber-600/15 text-amber-600'}`}>{s.deal_stage}</span>}</td>
                 <td className="py-2.5 px-2 text-right font-mono text-blue-600">{s.expected_premium_pct ? `+${s.expected_premium_pct.toFixed(0)}%` : '--'}</td>
                 <td className="py-2.5 px-4 text-gray-500 max-w-[250px] truncate">{s.acquirer_name || s.narrative || '--'}</td>
               </tr>))}</tbody></table></div>

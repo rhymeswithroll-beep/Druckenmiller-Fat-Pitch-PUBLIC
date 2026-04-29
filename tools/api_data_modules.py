@@ -135,15 +135,16 @@ def consensus_blindspots_symbol(symbol: str):
 # ── M&A INTELLIGENCE ──
 @router.get("/api/ma-signals")
 def ma_signals(min_score: int = 0, days: int = 30):
-    return query("SELECT * FROM ma_signals WHERE (symbol, date) IN (SELECT symbol, MAX(date) FROM ma_signals WHERE date >= date('now', ? || ' days') GROUP BY symbol) AND ma_score >= ? ORDER BY ma_score DESC", [f"-{days}", min_score])
+    # Always use latest available date so data shows even if pipeline is stale
+    return query("SELECT * FROM ma_signals WHERE date = (SELECT MAX(date) FROM ma_signals) AND ma_score >= ? ORDER BY ma_score DESC", [min_score])
 
 @router.get("/api/ma-signals/top-targets")
 def ma_top_targets():
-    return query("SELECT * FROM ma_signals WHERE date >= date('now', '-7 days') AND ma_score >= 50 ORDER BY ma_score DESC LIMIT 20")
+    return query("SELECT * FROM ma_signals WHERE date = (SELECT MAX(date) FROM ma_signals) AND ma_score >= 15 ORDER BY ma_score DESC LIMIT 20")
 
 @router.get("/api/ma-signals/rumors")
 def ma_rumors(days: int = 30):
-    return query("SELECT * FROM ma_rumors WHERE date >= date('now', ? || ' days') ORDER BY date DESC", [f"-{days}"])
+    return query("SELECT * FROM ma_rumors WHERE date = (SELECT MAX(date) FROM ma_rumors) ORDER BY credibility_score DESC, date DESC")
 
 @router.get("/api/ma-signals/{symbol}")
 def ma_detail(symbol: str):
