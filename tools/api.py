@@ -410,11 +410,12 @@ def displacement_symbol(symbol: str):
 
 
 @app.get("/api/alt-data")
-def alt_data(days: int = 7):
+def alt_data(days: int = 365):
     return query("""
-        SELECT * FROM alt_data_scores
+        SELECT id, date, source, indicator, value, signal_direction, signal_strength, narrative, affected_sectors, affected_tickers
+        FROM alternative_data
         WHERE date >= date('now', ? || ' days')
-        ORDER BY score DESC
+        ORDER BY date DESC, signal_strength DESC
     """, [f"-{days}"])
 
 

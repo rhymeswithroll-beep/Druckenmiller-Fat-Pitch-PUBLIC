@@ -10,10 +10,10 @@ export default function AltDataTab() {
   const [sourceFilter, setSourceFilter] = useState<string>('all');
 
   useEffect(() => {
-    api.altData(30).then(setSignals).catch((e) => setError(e.message || 'Failed to load alt data')).finally(() => setLoading(false));
+    api.altData(365).then(setSignals).catch((e) => setError(e.message || 'Failed to load alt data')).finally(() => setLoading(false));
   }, []);
 
-  const sources = [...new Set(signals.map(s => s.source))];
+  const sources = [...new Set(signals.map(s => s.source).filter(Boolean))];
   const filtered = sourceFilter === 'all' ? signals : signals.filter(s => s.source === sourceFilter);
   const dirColor = (dir: string) => dir === 'bullish' ? 'text-emerald-600' : dir === 'bearish' ? 'text-rose-600' : 'text-amber-600';
   const strengthColor = (v: number) => v >= 70 ? { bg: 'rgba(5,150,105,0.15)', fg: '#059669' } : v >= 40 ? { bg: 'rgba(217,119,6,0.15)', fg: '#d97706' } : { bg: 'rgba(243,244,246,1)', fg: '#6b7280' };
@@ -31,7 +31,7 @@ export default function AltDataTab() {
       <div className="flex gap-2 flex-wrap">
         <button onClick={() => setSourceFilter('all')} className={`px-3 py-1.5 rounded text-[10px] tracking-widest font-bold transition-all ${sourceFilter === 'all' ? 'bg-emerald-600/15 text-emerald-600 border border-emerald-600/30' : 'bg-white text-gray-500 border border-gray-200'}`}>ALL ({signals.length})</button>
         {sources.map(src => (
-          <button key={src} onClick={() => setSourceFilter(src)} className={`px-3 py-1.5 rounded text-[10px] tracking-widest font-bold transition-all ${sourceFilter === src ? 'bg-emerald-600/15 text-emerald-600 border border-emerald-600/30' : 'bg-white text-gray-500 border border-gray-200'}`}>{src.toUpperCase()} ({signals.filter(s => s.source === src).length})</button>
+          <button key={src} onClick={() => setSourceFilter(src)} className={`px-3 py-1.5 rounded text-[10px] tracking-widest font-bold transition-all ${sourceFilter === src ? 'bg-emerald-600/15 text-emerald-600 border border-emerald-600/30' : 'bg-white text-gray-500 border border-gray-200'}`}>{src?.toUpperCase() ?? 'UNKNOWN'} ({signals.filter(s => s.source === src).length})</button>
         ))}
       </div>
       <div className="panel overflow-hidden">
@@ -48,8 +48,8 @@ export default function AltDataTab() {
                     <td className="py-2.5 px-4 font-mono text-gray-500 text-[10px]">{s.date}</td>
                     <td className="py-2.5 px-2 text-gray-700 text-[10px]">{s.indicator}</td>
                     <td className="py-2.5 px-2 text-right font-mono text-gray-900">{s.value?.toFixed(2) || '--'}</td>
-                    <td className={`py-2.5 px-2 text-center font-bold text-[10px] ${dirColor(s.signal_direction)}`}>{s.signal_direction.toUpperCase()}</td>
-                    <td className="py-2.5 px-2 text-right"><span className="px-1.5 py-0.5 rounded-lg text-[10px] font-bold" {...bgFg(sc.bg, sc.fg)}>{s.signal_strength.toFixed(0)}</span></td>
+                    <td className={`py-2.5 px-2 text-center font-bold text-[10px] ${dirColor(s.signal_direction)}`}>{s.signal_direction?.toUpperCase() ?? '—'}</td>
+                    <td className="py-2.5 px-2 text-right"><span className="px-1.5 py-0.5 rounded-lg text-[10px] font-bold" {...bgFg(sc.bg, sc.fg)}>{s.signal_strength?.toFixed(0) ?? '—'}</span></td>
                     <td className="py-2.5 px-4 text-gray-500 max-w-[300px] truncate">{s.narrative || '--'}</td>
                   </tr>
                 );

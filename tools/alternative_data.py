@@ -10,7 +10,7 @@ from tools.config import (
     ENSO_MODERATE_STRENGTH, ENSO_STRONG_STRENGTH, NDVI_ZSCORE_THRESHOLD,
     NDVI_STRESS_BASE_STRENGTH, NDVI_QUERY_DELAY,
 )
-from tools.db import init_db, get_conn, query
+from tools.db import init_db, get_conn, get_sqlite_conn, query
 
 ST = {
     "energy":["OXY","COP","XOM","CVX","DVN","FANG","EOG","PXD","MPC","VLO","PSX"],
@@ -297,11 +297,13 @@ def _score_symbols(today):
                 sc.setdefault(sym,{"t":0,"s":[]}); sc[sym]["t"]+=w*0.3
     if not sc: return
     mx = max(d["t"] for d in sc.values()) or 1
-    rows = [(sym,"combined",today,min(100,d["t"]/mx*100),json.dumps(list(set(d["s"]))[:5]))
-            for sym,d in sc.items() if d["t"]/mx*100>=10]
+    rows = [(sym, today, min(100, d["t"]/mx*100), json.dumps(list(set(d["s"]))[:5]))
+            for sym, d in sc.items() if d["t"]/mx*100 >= 10]
     if rows:
-        with get_conn() as conn:
-            conn.executemany("INSERT OR REPLACE INTO alt_data_scores (symbol,source,date,score,details) VALUES (?,?,?,?,?)",rows)
+        with get_sqlite_conn() as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO alt_data_scores (symbol,date,alt_data_score,contributing_signals) VALUES (?,?,?,?)",
+                rows)
     print(f"  Scored {len(rows)} symbols")
 
 def run():
@@ -320,7 +322,7 @@ def run():
                  s.get("affected_sectors","[]"),s.get("affected_tickers","[]"),
                  s.get("signal_direction","neutral"),float(s.get("signal_strength",0)),
                  s.get("narrative",""),json.dumps(s)) for s in all_sigs]
-        with get_conn() as conn:
+        with get_sqlite_conn() as conn:
             conn.executemany("INSERT OR REPLACE INTO alternative_data "
                 "(date,source,indicator,value,value_zscore,affected_sectors,"
                 "affected_tickers,signal_direction,signal_strength,narrative,raw_data) "

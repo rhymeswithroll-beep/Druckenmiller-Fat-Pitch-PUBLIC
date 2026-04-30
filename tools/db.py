@@ -28,6 +28,7 @@ _SQLITE_PATH = os.path.join(
 )
 
 LOCAL_TABLES = frozenset({
+    # ── Always-local (pipeline-internal, large, or high-churn) ──
     "price_data",           # 903 stocks × 500+ days — the single biggest Neon consumer
     "stock_universe",       # 903 rows read by every module on every run
     "macro_indicators",     # FRED time-series, read heavily by macro/technical modules
@@ -39,6 +40,33 @@ LOCAL_TABLES = frozenset({
     "foreign_ticker_map",   # Static ~80-row ADR map; Neon pooler intermittently loses DDL
     "ma_signals",           # M&A target scoring — written and read locally
     "ma_rumors",            # M&A rumor headlines — written and read locally
+    # ── Migrated from Neon — high dashboard traffic, no multi-machine need ──
+    "signals",              # Main scoring output: 903 rows/day, queried on every dashboard load
+    "convergence_signals",  # Convergence scores: 903 rows/day, heatmap + sector drill-down
+    "technical_scores",     # Technical module output: asset detail pages
+    "fundamental_scores",   # Fundamental module output: asset detail pages
+    "sector_rotation",      # Sector RRG data: terminal sector panel
+    "market_breadth",       # Breadth metrics: terminal header
+    "macro_scores",         # Macro scoring: terminal + macro page
+    "signal_outcomes",      # Forward-return tracking: Performance page (valuable history)
+    "gate_results",         # Funnel gate results: gate cascade tracking
+    "gate_run_history",     # Per-run gate summary stats
+    "fundamentals",         # Raw yfinance metrics (marketCap, PE, etc.) — read by Gate 2
+    # ── Additional modules that were silently writing to Neon (quota-exceeded) ──
+    "economic_dashboard",           # FRED processed indicators: economic tab
+    "economic_heat_index",          # FRED heat index: economic tab
+    "consensus_blindspot_signals",  # Howard Marks blindspot signals
+    "prediction_market_signals",    # Polymarket signals: per-symbol
+    "prediction_market_raw",        # Polymarket raw markets
+    "estimate_momentum_signals",    # Estimate revision momentum
+    "estimate_snapshots",           # EPS/revenue snapshots
+    "regulatory_signals",           # AI regulatory signals: per-symbol
+    "regulatory_events",            # Regulatory events raw
+    "ai_exec_signals",              # AI exec investment tracker: per-symbol
+    "ai_exec_investments",          # AI exec investments raw
+    "ai_exec_url_cache",            # AI exec URL cache
+    "alternative_data",             # Alt data signals (weather, crop, etc.) — pipeline-local
+    "alt_data_scores",              # Aggregated alt data scores per symbol — pipeline-local
 })
 
 
@@ -49,6 +77,11 @@ def _get_sqlite():
     conn = sqlite3.connect(_SQLITE_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def get_sqlite_conn():
+    """Public alias for _get_sqlite() — for pipeline modules that write LOCAL_TABLES directly."""
+    return _get_sqlite()
 
 
 def _init_local_db():
@@ -91,6 +124,170 @@ def _init_local_db():
                 local_ticker TEXT PRIMARY KEY, adr_ticker TEXT,
                 company_name_local TEXT, company_name_english TEXT,
                 market TEXT, sector TEXT, in_universe INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS signals (
+                symbol TEXT, date TEXT, composite_score REAL, signal TEXT, sector TEXT,
+                technical_score REAL, fundamental_score REAL, asset_class TEXT,
+                macro_score REAL, entry_price REAL, stop_loss REAL, target_price REAL,
+                rr_ratio REAL, position_size_shares REAL, position_size_dollars REAL,
+                PRIMARY KEY (symbol, date)
+            );
+            CREATE TABLE IF NOT EXISTS convergence_signals (
+                symbol TEXT NOT NULL, date TEXT NOT NULL, convergence_score REAL NOT NULL,
+                module_count INTEGER, conviction_level TEXT, forensic_blocked INTEGER DEFAULT 0,
+                main_signal_score REAL, smartmoney_score REAL, worldview_score REAL,
+                variant_score REAL, research_score REAL, reddit_score REAL,
+                active_modules TEXT, narrative TEXT,
+                news_displacement_score REAL, alt_data_score REAL, sector_expert_score REAL,
+                foreign_intel_score REAL, pairs_score REAL, ma_score REAL,
+                energy_intel_score REAL, prediction_markets_score REAL,
+                pattern_options_score REAL, estimate_momentum_score REAL,
+                ai_regulatory_score REAL, consensus_blindspots_score REAL,
+                earnings_nlp_score REAL, gov_intel_score REAL, labor_intel_score REAL,
+                supply_chain_score REAL, digital_exhaust_score REAL, pharma_intel_score REAL,
+                aar_rail_score REAL, ship_tracking_score REAL, patent_intel_score REAL,
+                ucc_filings_score REAL, board_interlocks_score REAL,
+                short_interest_score REAL, retail_sentiment_score REAL,
+                onchain_intel_score REAL, analyst_intel_score REAL,
+                options_flow_score REAL, capital_flows_score REAL,
+                PRIMARY KEY (symbol, date)
+            );
+            CREATE TABLE IF NOT EXISTS technical_scores (
+                symbol TEXT, date TEXT, trend_score REAL, momentum_score REAL,
+                volatility_score REAL, volume_score REAL, total_score REAL,
+                breakout_score REAL, relative_strength_score REAL, breadth_score REAL,
+                PRIMARY KEY (symbol, date)
+            );
+            CREATE TABLE IF NOT EXISTS fundamental_scores (
+                symbol TEXT, date TEXT, value_score REAL, quality_score REAL,
+                growth_score REAL, total_score REAL,
+                PRIMARY KEY (symbol, date)
+            );
+            CREATE TABLE IF NOT EXISTS sector_rotation (
+                sector TEXT, date TEXT, rs_ratio REAL, rs_momentum REAL,
+                quadrant TEXT, rotation_score REAL, score REAL,
+                PRIMARY KEY (sector, date)
+            );
+            CREATE TABLE IF NOT EXISTS market_breadth (
+                date TEXT PRIMARY KEY, advancers INTEGER, decliners INTEGER,
+                new_highs INTEGER, new_lows INTEGER, adv_dec_ratio REAL,
+                advance_decline_ratio REAL, pct_above_200dma REAL,
+                breadth_score REAL, sector_rotation TEXT
+            );
+            CREATE TABLE IF NOT EXISTS macro_scores (
+                date TEXT PRIMARY KEY, regime TEXT, regime_score REAL, total_score REAL,
+                fed_funds_score REAL, m2_score REAL, real_rates_score REAL,
+                yield_curve_score REAL, credit_spreads_score REAL,
+                dxy_score REAL, vix_score REAL, details TEXT
+            );
+            CREATE TABLE IF NOT EXISTS signal_outcomes (
+                symbol TEXT NOT NULL, signal_date TEXT NOT NULL,
+                conviction_level TEXT, convergence_score REAL, module_count INTEGER,
+                active_modules TEXT, regime_at_signal TEXT, sector TEXT,
+                market_cap_bucket TEXT, entry_price REAL,
+                price_1d REAL, return_1d REAL, price_5d REAL, return_5d REAL,
+                price_10d REAL, return_10d REAL, price_20d REAL, return_20d REAL,
+                price_30d REAL, return_30d REAL, price_60d REAL, return_60d REAL,
+                price_90d REAL, return_90d REAL,
+                hit_target INTEGER, hit_stop INTEGER,
+                da_risk_score REAL, da_warning INTEGER DEFAULT 0,
+                PRIMARY KEY (symbol, signal_date)
+            );
+            CREATE TABLE IF NOT EXISTS gate_results (
+                symbol TEXT, date TEXT,
+                gate_0 INTEGER DEFAULT 1, gate_1 INTEGER, gate_2 INTEGER,
+                gate_3 INTEGER, gate_4 INTEGER, gate_5 INTEGER, gate_6 INTEGER,
+                gate_7 INTEGER, gate_8 INTEGER, gate_9 INTEGER, gate_10 INTEGER,
+                last_gate_passed INTEGER, fail_reason TEXT, asset_class TEXT,
+                entry_mode TEXT,
+                PRIMARY KEY (symbol, date)
+            );
+            CREATE TABLE IF NOT EXISTS gate_run_history (
+                run_id TEXT PRIMARY KEY, date TEXT, total_assets INTEGER,
+                gate_1_passed INTEGER, gate_2_passed INTEGER, gate_3_passed INTEGER,
+                gate_4_passed INTEGER, gate_5_passed INTEGER, gate_6_passed INTEGER,
+                gate_7_passed INTEGER, gate_8_passed INTEGER, gate_9_passed INTEGER,
+                gate_10_passed INTEGER, run_time_seconds REAL
+            );
+            CREATE TABLE IF NOT EXISTS fundamentals (
+                symbol TEXT NOT NULL, metric TEXT NOT NULL, value REAL,
+                updated_at TEXT,
+                PRIMARY KEY (symbol, metric)
+            );
+            CREATE TABLE IF NOT EXISTS economic_dashboard (
+                indicator_id TEXT, date TEXT, category TEXT, name TEXT, value REAL,
+                prev_value REAL, mom_change REAL, yoy_change REAL, zscore REAL,
+                trend TEXT, signal TEXT, last_updated TEXT,
+                PRIMARY KEY (indicator_id, date)
+            );
+            CREATE TABLE IF NOT EXISTS economic_heat_index (
+                date TEXT PRIMARY KEY, heat_index REAL, improving_count INTEGER,
+                deteriorating_count INTEGER, stable_count INTEGER,
+                leading_count INTEGER, detail TEXT
+            );
+            CREATE TABLE IF NOT EXISTS consensus_blindspot_signals (
+                symbol TEXT, date TEXT, cbs_score REAL, gap_type TEXT,
+                cycle_position TEXT, details TEXT,
+                PRIMARY KEY (symbol, date)
+            );
+            CREATE TABLE IF NOT EXISTS prediction_market_signals (
+                symbol TEXT, date TEXT, pm_score REAL, market_count INTEGER,
+                net_impact REAL, status TEXT, narrative TEXT, sector TEXT, details TEXT,
+                PRIMARY KEY (symbol, date)
+            );
+            CREATE TABLE IF NOT EXISTS prediction_market_raw (
+                market_id TEXT, date TEXT, question TEXT, impact_category TEXT,
+                yes_probability REAL, volume REAL, liquidity REAL, direction TEXT,
+                confidence REAL, specific_symbols TEXT, rationale TEXT, end_date TEXT,
+                probability REAL, category TEXT, relevance TEXT,
+                PRIMARY KEY (market_id, date)
+            );
+            CREATE TABLE IF NOT EXISTS estimate_snapshots (
+                symbol TEXT, date TEXT, eps_current REAL, eps_next REAL,
+                rev_current REAL, rev_next REAL, details TEXT,
+                PRIMARY KEY (symbol, date)
+            );
+            CREATE TABLE IF NOT EXISTS estimate_momentum_signals (
+                symbol TEXT, date TEXT, em_score REAL,
+                eps_velocity_7d REAL, eps_velocity_30d REAL, eps_velocity_90d REAL,
+                velocity_score REAL, rev_velocity_score REAL,
+                acceleration REAL, acceleration_score REAL,
+                beat_streak INTEGER, miss_streak INTEGER,
+                avg_surprise_pct REAL, surprise_score REAL,
+                dispersion_pct REAL, dispersion_score REAL,
+                sector_rank_pct REAL, sector_rank_score REAL,
+                hist_eps_velocity REAL, hist_rev_velocity REAL, hist_score REAL,
+                PRIMARY KEY (symbol, date)
+            );
+            CREATE TABLE IF NOT EXISTS regulatory_signals (
+                symbol TEXT, date TEXT, reg_score REAL, event_count INTEGER,
+                net_impact REAL, status TEXT, narrative TEXT,
+                PRIMARY KEY (symbol, date)
+            );
+            CREATE TABLE IF NOT EXISTS regulatory_events (
+                event_id TEXT, date TEXT, title TEXT, source TEXT, severity REAL,
+                category TEXT, direction TEXT, jurisdiction TEXT,
+                affected_symbols TEXT, details TEXT,
+                PRIMARY KEY (event_id, date)
+            );
+            CREATE TABLE IF NOT EXISTS ai_exec_signals (
+                symbol TEXT, date TEXT, score REAL, ai_exec_score REAL,
+                exec_count INTEGER, top_exec TEXT, top_activity TEXT,
+                sector_signal TEXT, narrative TEXT,
+                PRIMARY KEY (symbol, date)
+            );
+            CREATE TABLE IF NOT EXISTS ai_exec_investments (
+                exec_name TEXT, exec_org TEXT, exec_prominence TEXT, activity_type TEXT,
+                target_company TEXT, target_ticker TEXT, target_sector TEXT,
+                investment_amount REAL, funding_round TEXT, is_public INTEGER,
+                ipo_expected INTEGER, ipo_timeline TEXT, date_reported TEXT,
+                confidence REAL, summary TEXT, source_url TEXT, source TEXT,
+                raw_score REAL, scan_date TEXT,
+                PRIMARY KEY (exec_name, target_company, date_reported)
+            );
+            CREATE TABLE IF NOT EXISTS ai_exec_url_cache (
+                url TEXT PRIMARY KEY, fetched_date TEXT, content TEXT,
+                scraped_at TEXT, status TEXT
             );
         """)
         conn.commit()
