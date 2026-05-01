@@ -128,6 +128,7 @@ def _init_local_db():
                 symbol TEXT, date TEXT, insider_name TEXT, insider_title TEXT,
                 transaction_type TEXT, shares REAL, price REAL, value REAL,
                 shares_owned_after REAL, filing_url TEXT, source TEXT,
+                is_10b51_planned INTEGER DEFAULT 0,
                 PRIMARY KEY (symbol, date, insider_name, transaction_type)
             );
             CREATE TABLE IF NOT EXISTS insider_signals (
@@ -307,6 +308,15 @@ def _init_local_db():
                 scraped_at TEXT, status TEXT
             );
         """)
+        # Migrations: SQLite does not support IF NOT EXISTS on ALTER TABLE — use try/except
+        for _col_sql in [
+            "ALTER TABLE insider_transactions ADD COLUMN is_10b51_planned INTEGER DEFAULT 0",
+            "ALTER TABLE edgar_insider_raw ADD COLUMN is_10b51_planned INTEGER DEFAULT 0",
+        ]:
+            try:
+                conn.execute(_col_sql)
+            except Exception:
+                pass  # column already exists
         conn.commit()
     finally:
         conn.close()

@@ -198,11 +198,15 @@ def _load_asset_scores():
         if r["symbol"] in scores:
             scores[r["symbol"]]["smartmoney_score"] = r.get("conviction_score", 0)
 
-    # Insider buying (recent 90d net)
+    # Insider buying (recent 90d net — discretionary only)
+    # Exclude Rule 10b5-1 planned sales (pre-scheduled, non-discretionary) and
+    # TAX_WITHHOLDING (RSU tax sells, transaction code F — not a market signal).
     insider_rows = query(
         """SELECT symbol, SUM(CASE WHEN transaction_type = 'BUY' THEN value ELSE -value END) as net_buy
            FROM insider_transactions
-           WHERE date >= date('now', '-90 days') AND transaction_type IN ('BUY', 'SELL')
+           WHERE date >= date('now', '-90 days')
+             AND transaction_type IN ('BUY', 'SELL')
+             AND (is_10b51_planned IS NULL OR is_10b51_planned = 0)
            GROUP BY symbol"""
     )
     for r in insider_rows:
@@ -432,10 +436,16 @@ def _evaluate_gates(symbol, data, thresholds, overrides):
     if asset_class == "equity":
         adv = data.get("adv_m", 0) or 0
         mc = data.get("market_cap_m", 0) or 0
-        liq_ok = adv >= g2["min_adv_m"] and mc >= g2["min_mktcap_m"]
-        if not check(2, liq_ok,
-                     f"ADV=${adv:.1f}M (min {g2['min_adv_m']}M) or "
-                     f"mktcap=${mc:.0f}M (min {g2['min_mktcap_m']}M)"):
+        # If mktcap data is unavailable (0), only enforce ADV — avoids wiping out
+        # the entire equity universe when the fundamentals table is empty/stale.
+        if mc > 0:
+            liq_ok = adv >= g2["min_adv_m"] and mc >= g2["min_mktcap_m"]
+            reason = (f"ADV=${adv:.1f}M (min {g2['min_adv_m']}M), "
+                      f"mktcap=${mc:.0f}M (min {g2['min_mktcap_m']}M)")
+        else:
+            liq_ok = adv >= g2["min_adv_m"]
+            reason = f"ADV=${adv:.1f}M (min {g2['min_adv_m']}M) [mktcap unavailable]"
+        if not check(2, liq_ok, reason):
             return gates, last_gate, fail_reason
     else:
         # Crypto/commodities pass liquidity gate by default
@@ -520,7 +530,7 @@ def _evaluate_gates(symbol, data, thresholds, overrides):
         # Equity: requires independent smart money evidence — OR graceful bypass if no data exists.
         # Druckenmiller principle: a broken data pipe should not override 6 gates of conviction.
         # Significant insider selling ($1M+ net) blocks regardless of other signals.
-        significant_selling = insider_net < -1_000_000
+        significant_selling = insider_net < -1_000_000  # discretionary sells only (10b5-1 excluded)
         has_any_sm_data = (sm > 0 or insider_net != 0 or capital_flow > 0 or smart_mgr_count > 0)
         if not has_any_sm_data:
             # No smart money data available for this symbol — bypass rather than wrongly block.
@@ -534,7 +544,7 @@ def _evaluate_gates(symbol, data, thresholds, overrides):
                       smart_mgr_count >= 2))
     if not check(7, sm_ok,
                  f"smartmoney={sm:.0f} < {g7['min_smartmoney_score']}, "
-                 f"capital_flow={capital_flow:.0f}, insider_net={insider_net:.0f}"):
+                 f"capital_flow={capital_flow:.0f}, discretionary_insider_net={insider_net:.0f}"):
         return gates, last_gate, fail_reason
 
     # GATE 8: Signal Convergence
@@ -554,9 +564,13 @@ def _evaluate_gates(symbol, data, thresholds, overrides):
     data_coverage = min(1.0, len([k for k, v in data.items() if k.endswith("_score") and v]) / total_modules)
     adjusted_threshold = max(40, g8["min_convergence_score"] * max(0.7, data_coverage))
     adjusted_min_mods = max(2, int(g8["min_modules"] * max(0.5, data_coverage)))
+    g8_parts = []
+    if conv < adjusted_threshold:
+        g8_parts.append(f"convergence={conv:.0f} < {adjusted_threshold:.0f}")
+    if mods < adjusted_min_mods:
+        g8_parts.append(f"modules={mods} < {adjusted_min_mods}")
     if not check(8, conv >= adjusted_threshold and mods >= adjusted_min_mods,
-                 f"convergence={conv:.0f} < {adjusted_threshold:.0f} "
-                 f"or modules={mods} < {adjusted_min_mods}"):
+                 " | ".join(g8_parts)):
         return gates, last_gate, fail_reason
 
     # GATE 9: Catalyst (enhanced with options flow + short squeeze)
@@ -590,9 +604,14 @@ def _evaluate_gates(symbol, data, thresholds, overrides):
         rr >= g10["min_rr"] and
         (is_buy or not g10["require_buy_signal"])
     )
-    check(10, fat_ok,
-          f"composite={composite:.0f} < {g10['min_composite_score']} or "
-          f"rr={rr:.1f} < {g10['min_rr']} or signal={signal}")
+    g10_parts = []
+    if composite < g10["min_composite_score"]:
+        g10_parts.append(f"composite={composite:.0f} < {g10['min_composite_score']}")
+    if rr < g10["min_rr"]:
+        g10_parts.append(f"rr={rr:.1f} < {g10['min_rr']}")
+    if g10["require_buy_signal"] and not is_buy:
+        g10_parts.append(f"signal={signal}")
+    check(10, fat_ok, " | ".join(g10_parts) if g10_parts else "")
 
     return gates, last_gate, fail_reason
 
@@ -694,16 +713,12 @@ def run():
         gate_counts[5], gate_counts[6], gate_counts[7], gate_counts[8],
         gate_counts[9], gate_counts[10], round(elapsed, 1),
     )
-    conn = get_conn()
-    conn.execute("""
-        INSERT OR REPLACE INTO gate_run_history
-        (run_id, date, total_assets, gate_1_passed, gate_2_passed, gate_3_passed,
-         gate_4_passed, gate_5_passed, gate_6_passed, gate_7_passed, gate_8_passed,
-         gate_9_passed, gate_10_passed, run_time_seconds)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, history_row)
-    conn.commit()
-    conn.close()
+    upsert_many("gate_run_history",
+        ["run_id", "date", "total_assets", "gate_1_passed", "gate_2_passed",
+         "gate_3_passed", "gate_4_passed", "gate_5_passed", "gate_6_passed",
+         "gate_7_passed", "gate_8_passed", "gate_9_passed", "gate_10_passed",
+         "run_time_seconds"],
+        [history_row])
 
     # Print waterfall
     print(f"\n  {'Gate':<25} {'Count':>6}  {'% of prev':>9}  Bar")

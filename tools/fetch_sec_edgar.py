@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS edgar_insider_raw (
     symbol TEXT, date TEXT, title TEXT,
     transaction_type TEXT, shares REAL, price REAL, value REAL,
     shares_owned_after REAL, form_type TEXT, filing_url TEXT,
+    is_10b51_planned INTEGER DEFAULT 0,
     PRIMARY KEY (accession, owner_name)
 );
 CREATE TABLE IF NOT EXISTS edgar_filing_metadata (
@@ -70,6 +71,14 @@ CREATE TABLE IF NOT EXISTS edgar_filing_metadata (
     filer_name TEXT, filing_url TEXT, description TEXT
 );
     """)
+    for _col_sql in [
+        "ALTER TABLE edgar_insider_raw ADD COLUMN is_10b51_planned INTEGER DEFAULT 0",
+        "ALTER TABLE insider_transactions ADD COLUMN is_10b51_planned INTEGER DEFAULT 0",
+    ]:
+        try:
+            conn.execute(_col_sql)
+        except Exception:
+            pass
     conn.commit()
     conn.close()
 
@@ -234,6 +243,12 @@ def _parse_form4_xml(xml_text: str, fallback_symbol: str,
 
     filing_url = f"{EDGAR_ARCHIVE}/{cik}/{accession_nodash}/"
 
+    # Document-level 10b5-1 plan flag: <aff10b5One>1</aff10b5One>
+    # When 1, ALL transactions in this filing were made under a pre-adopted Rule 10b5-1 plan
+    # (i.e., discretionary control was surrendered before the trade window opened).
+    aff10b5_text = (root.findtext(".//aff10b5One") or "").strip()
+    is_10b51_planned = 1 if aff10b5_text == "1" else 0
+
     results = []
     for tx_node in root.findall(".//nonDerivativeTransaction"):
         # Date
@@ -283,6 +298,7 @@ def _parse_form4_xml(xml_text: str, fallback_symbol: str,
             "value":            round(value, 2),
             "shares_owned_after": _safe_float(owned_text),
             "filing_url":       filing_url,
+            "is_10b51_planned": is_10b51_planned,
         })
 
     return results
@@ -375,6 +391,7 @@ def run():
                 p["symbol"] or ticker, p["date"], p["title"],
                 p["transaction_type"], p["shares"], p["price"], p["value"],
                 p["shares_owned_after"], "4", p["filing_url"],
+                p["is_10b51_planned"],
             ))
             # insider_transactions row (same schema as yfinance/FMP fallback)
             tx_rows.append((
@@ -389,6 +406,7 @@ def run():
                 p["shares_owned_after"],
                 f"edgar://{adsh}/{p['owner_name']}",
                 "edgar",
+                p["is_10b51_planned"],
             ))
 
     # ── Persist ───────────────────────────────────────────────────────
@@ -405,7 +423,7 @@ def run():
             "edgar_insider_raw",
             ["accession", "owner_name", "symbol", "date", "title",
              "transaction_type", "shares", "price", "value",
-             "shares_owned_after", "form_type", "filing_url"],
+             "shares_owned_after", "form_type", "filing_url", "is_10b51_planned"],
             raw_rows,
         )
 
@@ -413,7 +431,8 @@ def run():
         upsert_many(
             "insider_transactions",
             ["symbol", "date", "insider_name", "insider_title", "transaction_type",
-             "shares", "price", "value", "shares_owned_after", "filing_url", "source"],
+             "shares", "price", "value", "shares_owned_after", "filing_url", "source",
+             "is_10b51_planned"],
             tx_rows,
         )
 
