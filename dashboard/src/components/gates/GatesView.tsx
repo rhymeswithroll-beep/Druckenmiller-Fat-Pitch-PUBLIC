@@ -4,6 +4,24 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useStockPanel } from '@/contexts/StockPanelContext';
 
+function exportGateCSV(gate: number, gateName: string, assets: GateAsset[]) {
+  const cols = ['symbol', 'name', 'sector', 'asset_class', 'last_gate_passed', 'composite_score', 'signal', 'entry_mode', 'fail_reason'];
+  const header = cols.join(',');
+  const lines = assets.map(a =>
+    cols.map(c => {
+      const v = (a as any)[c] ?? '';
+      return `"${String(v).replace(/"/g, '""')}"`;
+    }).join(',')
+  );
+  const blob = new Blob([header + '\n' + lines.join('\n')], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `gate${gate}_${gateName.replace(/\s+/g, '_').toLowerCase()}_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface GateCascade {
@@ -197,6 +215,9 @@ function WaterfallPanel({
 
 // ─── Asset List Panel ────────────────────────────────────────────────────────
 
+const SIGNAL_FILTERS = ['', 'STRONG_BUY', 'BUY', 'NEUTRAL'] as const;
+type SignalFilter = typeof SIGNAL_FILTERS[number];
+
 function AssetListPanel({
   gate,
   gateName,
@@ -212,27 +233,56 @@ function AssetListPanel({
   selectedSymbol: string | null;
   loading: boolean;
 }) {
+  const [signalFilter, setSignalFilter] = useState<SignalFilter>('');
+
+  const filtered = signalFilter
+    ? assets.filter(a => a.signal === signalFilter)
+    : assets;
+
   return (
     <div className="h-full flex flex-col">
-      <div className="mb-3 px-1 flex items-center justify-between">
+      <div className="mb-2 px-1 flex items-center justify-between gap-2 flex-wrap">
         <div>
           <span className="text-[10px] text-gray-500 tracking-widest">GATE {gate}</span>
           <h2 className="text-sm font-bold text-slate-900 tracking-wide">{gateName}</h2>
         </div>
-        <span className="text-[10px] text-gray-500 font-mono">{assets.length} assets</span>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {SIGNAL_FILTERS.map(f => (
+            <button
+              key={f || 'all'}
+              onClick={() => setSignalFilter(f)}
+              className={`text-[9px] px-1.5 py-0.5 rounded transition-colors font-mono tracking-wide ${
+                signalFilter === f
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : 'text-gray-400 hover:bg-gray-50 border border-transparent'
+              }`}
+            >
+              {f || 'ALL'}
+            </button>
+          ))}
+          <span className="text-[10px] text-gray-400 font-mono">{filtered.length}</span>
+          <button
+            onClick={() => exportGateCSV(gate, gateName, filtered)}
+            className="text-[9px] px-2 py-0.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors font-semibold tracking-wide"
+          >
+            ↓ CSV
+          </button>
+        </div>
       </div>
 
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
           <span className="text-[10px] text-gray-400 animate-pulse">Loading...</span>
         </div>
-      ) : assets.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="flex-1 flex items-center justify-center">
-          <span className="text-[10px] text-gray-600">No assets at this gate</span>
+          <span className="text-[10px] text-gray-600">
+            {assets.length === 0 ? 'No assets at this gate' : `No ${signalFilter} signals at this gate`}
+          </span>
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto space-y-0.5 pr-1">
-          {assets.map((a) => (
+          {filtered.map((a) => (
             <button
               key={a.symbol}
               onClick={() => onSelectSymbol(a.symbol)}

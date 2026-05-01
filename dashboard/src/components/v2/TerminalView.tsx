@@ -402,7 +402,7 @@ export default function TerminalView() {
                     ))}
                   </div>
                 </div>
-                <div className="divide-y divide-gray-50 max-h-64 overflow-y-auto">
+                <div className="divide-y divide-gray-50">
                   {filteredEcon.map((ind: any, i: number) => {
                     const mom = ind.mom_change as number | null;
                     const yoy = ind.yoy_change as number | null;

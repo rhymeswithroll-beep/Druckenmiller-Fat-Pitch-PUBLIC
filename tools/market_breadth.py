@@ -66,8 +66,8 @@ def compute_breadth():
             lookback = min(252, date_idx)
             if lookback >= 60:  # need at least 60 days for meaningful highs/lows
                 lookback_start = dates[date_idx - lookback]
-                high_252 = pivot.loc[lookback_start:date].max()
-                low_252 = pivot.loc[lookback_start:date].min()
+                high_252 = pivot.loc[lookback_start:date].max().reindex(current_prices.index)
+                low_252 = pivot.loc[lookback_start:date].min().reindex(current_prices.index)
                 new_highs = (current_prices >= high_252 * 0.99).sum()
                 new_lows = (current_prices <= low_252 * 1.01).sum()
             else:

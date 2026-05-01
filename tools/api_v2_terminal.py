@@ -375,7 +375,7 @@ def market_headlines():
                    m.deal_stage, u.name as company_name
             FROM ma_signals m
             LEFT JOIN stock_universe u ON m.symbol = u.symbol
-            WHERE m.date::date >= CURRENT_DATE - INTERVAL '14 days'
+            WHERE m.date >= date('now', '-14 days')
             AND m.best_headline IS NOT NULL
             AND m.ma_score >= 40
             ORDER BY m.ma_score DESC, m.date DESC
@@ -507,18 +507,18 @@ def sector_detail(sector: str):
     syms = [r["symbol"] for r in universe]
     name_map = {r["symbol"]: r["name"] for r in universe}
 
-    # 2. Get latest signals from Neon (cross-DB: split query)
-    ph = ",".join(["%s"] * len(syms))
+    # 2. Get latest signals (SQLite uses ? placeholders)
+    ph = ",".join(["?"] * len(syms))
     sig_rows = query(
         f"""SELECT symbol, composite_score, signal, rr_ratio, entry_price, stop_loss, target_price
             FROM signals
             WHERE symbol IN ({ph})
             AND date = (SELECT MAX(date) FROM signals)
-            ORDER BY composite_score DESC NULLS LAST""",
+            ORDER BY composite_score DESC""",
         syms
     )
 
-    # 3. Get conviction levels from convergence_signals (Neon)
+    # 3. Get conviction levels from convergence_signals (SQLite)
     conv_rows = query(
         f"SELECT symbol, convergence_score, conviction_level FROM convergence_signals WHERE symbol IN ({ph}) AND date = (SELECT MAX(date) FROM convergence_signals)",
         syms

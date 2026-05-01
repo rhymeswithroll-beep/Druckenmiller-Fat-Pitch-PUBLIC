@@ -39,7 +39,8 @@ function scoreColor(score: number | null) {
 export default function SectorDrillDown({ sector, onClose }: Props) {
   const [stocks, setStocks] = useState<SectorStock[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<string>('');
+  const [convFilter, setConvFilter] = useState<string>('');
+  const [signalFilter, setSignalFilter] = useState<string>('');
   const { open: openStock } = useStockPanel();
 
   useEffect(() => {
@@ -57,9 +58,14 @@ export default function SectorDrillDown({ sector, onClose }: Props) {
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  const filtered = filter
-    ? stocks.filter(s => s.conviction_level?.toUpperCase() === filter || (filter === 'NOTABLE' && s.conviction_level?.toUpperCase() === 'MEDIUM'))
-    : stocks;
+  // Counts for bulls/bears badges
+  const bullCount = stocks.filter(s => s.signal?.includes('BUY')).length;
+  const bearCount = stocks.filter(s => s.signal?.includes('SELL')).length;
+
+  let filtered = stocks;
+  if (convFilter) filtered = filtered.filter(s => s.conviction_level?.toUpperCase() === convFilter || (convFilter === 'NOTABLE' && s.conviction_level?.toUpperCase() === 'MEDIUM'));
+  if (signalFilter === 'BULL') filtered = filtered.filter(s => s.signal?.includes('BUY'));
+  if (signalFilter === 'BEAR') filtered = filtered.filter(s => s.signal?.includes('SELL'));
 
   const withSignal = filtered.filter(s => s.composite_score != null);
   const noSignal = filtered.filter(s => s.composite_score == null);
@@ -98,14 +104,32 @@ export default function SectorDrillDown({ sector, onClose }: Props) {
               {loading ? 'Loading...' : `${stocks.length} stocks · ${withSignal.length} with signals`}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            {/* Bulls / Bears filter */}
+            <button
+              onClick={() => setSignalFilter(signalFilter === 'BULL' ? '' : 'BULL')}
+              className={`text-[9px] px-2 py-1 rounded-md font-semibold tracking-wider border transition-colors ${
+                signalFilter === 'BULL' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'text-gray-400 border-transparent hover:bg-gray-50'
+              }`}
+            >
+              🐂 {bullCount}
+            </button>
+            <button
+              onClick={() => setSignalFilter(signalFilter === 'BEAR' ? '' : 'BEAR')}
+              className={`text-[9px] px-2 py-1 rounded-md font-semibold tracking-wider border transition-colors ${
+                signalFilter === 'BEAR' ? 'bg-rose-50 text-rose-700 border-rose-200' : 'text-gray-400 border-transparent hover:bg-gray-50'
+              }`}
+            >
+              🐻 {bearCount}
+            </button>
+            <div className="w-px h-3 bg-gray-200 mx-0.5" />
             {/* Conviction filter */}
             {['HIGH', 'NOTABLE', 'WATCH'].map(level => (
               <button
                 key={level}
-                onClick={() => setFilter(filter === level ? '' : level)}
+                onClick={() => setConvFilter(convFilter === level ? '' : level)}
                 className={`text-[9px] px-2 py-1 rounded-md font-semibold tracking-wider border transition-colors ${
-                  filter === level
+                  convFilter === level
                     ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                     : 'text-gray-400 border-transparent hover:bg-gray-50'
                 }`}
@@ -113,6 +137,7 @@ export default function SectorDrillDown({ sector, onClose }: Props) {
                 {level}
               </button>
             ))}
+            <div className="w-px h-3 bg-gray-200 mx-0.5" />
             <button
               onClick={exportCSV}
               className="text-[9px] px-2.5 py-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 font-semibold tracking-wide transition-colors"

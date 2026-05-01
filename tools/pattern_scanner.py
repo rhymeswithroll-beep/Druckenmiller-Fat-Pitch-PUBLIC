@@ -310,10 +310,10 @@ def scan_all(symbols=None):
     print(f"  Regime: {rctx['regime']} (score={rctx['regime_score']:.0f}), VIX={rctx['vix_level']:.1f} (pct={rctx['vix_percentile']:.0f}), trend={rctx['trend_filter']}")
     sr = compute_sector_rotation(pm, sm); td = date.today().isoformat()
     if sr:
-        with get_conn() as conn:
-            for s, d in sr.items():
-                conn.execute("INSERT OR REPLACE INTO sector_rotation (sector,date,rs_ratio,rs_momentum,quadrant,rotation_score) VALUES (?,?,?,?,?,?)",
-                    (s, td, d["rs_ratio"], d["rs_momentum"], d["quadrant"], d["rotation_score"]))
+        from tools.db import upsert_many as _upsert_many
+        _upsert_many("sector_rotation",
+            ["sector", "date", "rs_ratio", "rs_momentum", "quadrant", "rotation_score"],
+            [(s, td, d["rs_ratio"], d["rs_momentum"], d["quadrant"], d["rotation_score"]) for s, d in sr.items()])
         print(f"  Sector rotation: {len(sr)} sectors | Leading: {[s for s,d in sr.items() if d['quadrant']=='leading'][:3]} | Lagging: {[s for s,d in sr.items() if d['quadrant']=='lagging'][:3]}")
     if symbols is None: symbols = list(pm.columns)
     symbols = [s for s in symbols if s in pm.columns]

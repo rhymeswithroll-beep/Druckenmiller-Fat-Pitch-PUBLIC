@@ -2,15 +2,21 @@
 Weights 24 modules, produces conviction levels (HIGH/NOTABLE/WATCH/BLOCKED)."""
 import json, logging
 from datetime import date
-from tools.db import get_conn, query
+from tools.db import get_conn, query, upsert_many
 from tools.config import (CONVERGENCE_WEIGHTS, CONVICTION_HIGH, CONVICTION_NOTABLE, REGIME_CONVERGENCE_WEIGHTS)
 
 logger = logging.getLogger(__name__)
 MODULE_THRESHOLD = 50.0
 
 def _qmax(table, score_col):
-    return query(f"""SELECT DISTINCT ON (symbol) symbol, {score_col}
-        FROM {table} WHERE {score_col} IS NOT NULL ORDER BY symbol, date DESC""")
+    # Use a subquery for latest-per-symbol — works in both SQLite and PostgreSQL
+    return query(f"""SELECT t.symbol, t.{score_col}
+        FROM {table} t
+        INNER JOIN (
+            SELECT symbol, MAX(date) AS mx FROM {table}
+            WHERE {score_col} IS NOT NULL GROUP BY symbol
+        ) m ON t.symbol = m.symbol AND t.date = m.mx
+        WHERE t.{score_col} IS NOT NULL""")
 
 def _safe_load(fn, name):
     try: return fn()
@@ -191,20 +197,18 @@ def run():
         row += [json.dumps(active), narrative]
         results.append(tuple(row))
     if results:
-        cols = ("symbol,date,convergence_score,module_count,conviction_level,forensic_blocked,"
-                "main_signal_score,smartmoney_score,worldview_score,variant_score,research_score,"
-                "reddit_score,foreign_intel_score,news_displacement_score,alt_data_score,"
-                "sector_expert_score,pairs_score,ma_score,energy_intel_score,prediction_markets_score,"
-                "pattern_options_score,estimate_momentum_score,ai_regulatory_score,"
-                "consensus_blindspots_score,earnings_nlp_score,gov_intel_score,labor_intel_score,"
-                "supply_chain_score,digital_exhaust_score,pharma_intel_score,"
-                "aar_rail_score,ship_tracking_score,patent_intel_score,ucc_filings_score,board_interlocks_score,"
-                "short_interest_score,retail_sentiment_score,onchain_intel_score,"
-                "analyst_intel_score,options_flow_score,capital_flows_score,"
-                "active_modules,narrative")
-        placeholders = ",".join(["?"]*43)
-        with get_conn() as conn:
-            conn.executemany(f"INSERT OR REPLACE INTO convergence_signals ({cols}) VALUES ({placeholders})", results)
+        cols = ["symbol","date","convergence_score","module_count","conviction_level","forensic_blocked",
+                "main_signal_score","smartmoney_score","worldview_score","variant_score","research_score",
+                "reddit_score","foreign_intel_score","news_displacement_score","alt_data_score",
+                "sector_expert_score","pairs_score","ma_score","energy_intel_score","prediction_markets_score",
+                "pattern_options_score","estimate_momentum_score","ai_regulatory_score",
+                "consensus_blindspots_score","earnings_nlp_score","gov_intel_score","labor_intel_score",
+                "supply_chain_score","digital_exhaust_score","pharma_intel_score",
+                "aar_rail_score","ship_tracking_score","patent_intel_score","ucc_filings_score","board_interlocks_score",
+                "short_interest_score","retail_sentiment_score","onchain_intel_score",
+                "analyst_intel_score","options_flow_score","capital_flows_score",
+                "active_modules","narrative"]
+        upsert_many("convergence_signals", cols, results)
     high = sum(1 for r in results if r[4]=="HIGH")
     notable = sum(1 for r in results if r[4]=="NOTABLE")
     watch = sum(1 for r in results if r[4]=="WATCH")

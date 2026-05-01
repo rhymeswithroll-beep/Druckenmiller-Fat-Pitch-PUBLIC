@@ -83,16 +83,16 @@ export default function HomeContent() {
           <div className={`${regimeClass(macro.regime)} flex items-center gap-2`}>
             <span>{macro.regime.replace(/_/g, ' ').toUpperCase()}</span>
             <span className="opacity-50">·</span>
-            <span className="opacity-70 text-[10px] font-mono">{(macro.total_score ?? 0).toFixed(0)}</span>
+            <span className="opacity-70 text-[10px] font-mono">{Math.round(((macro.total_score ?? 0) + 100) / 2)}/100</span>
           </div>
         )}
         {breadth && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-gray-500 tracking-wider">BREADTH</span>
+            <span className="text-[10px] text-gray-500 tracking-wider">% ABOVE 200d MA</span>
             <div className="w-24 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-              <div className="h-full rounded-full transition-all duration-500" {...cs({ width: `${breadth.pct_above_200dma ?? 50}%`, backgroundColor: (breadth.pct_above_200dma ?? 50) > 50 ? '#059669' : '#e11d48' })} />
+              <div className="h-full rounded-full transition-all duration-500" {...cs({ width: `${breadth.pct_above_200dma ?? 50}%`, backgroundColor: (breadth.pct_above_200dma ?? 50) > 60 ? '#059669' : (breadth.pct_above_200dma ?? 50) > 40 ? '#d97706' : '#e11d48' })} />
             </div>
-            <span className={`text-[11px] font-mono ${(breadth.pct_above_200dma ?? 50) > 50 ? 'text-emerald-600' : 'text-rose-600'}`}>{(breadth.pct_above_200dma ?? 50).toFixed(0)}%</span>
+            <span className={`text-[11px] font-mono ${(breadth.pct_above_200dma ?? 50) > 60 ? 'text-emerald-600' : (breadth.pct_above_200dma ?? 50) > 40 ? 'text-amber-600' : 'text-rose-600'}`}>{(breadth.pct_above_200dma ?? 50).toFixed(0)}%</span>
           </div>
         )}
         <div className="flex-1" />
