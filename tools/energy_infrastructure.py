@@ -6,7 +6,7 @@ _project_root = str(Path(__file__).parent.parent)
 if _project_root not in sys.path: sys.path.insert(0, _project_root)
 import requests
 from tools.config import GEMINI_API_KEY, GEMINI_BASE, GEMINI_MODEL
-from tools.db import init_db, query, get_conn
+from tools.db import init_db, query, get_conn, llm_post_with_retry
 
 CONGRESS_API_KEY = os.getenv("CONGRESS_API_KEY", "")
 CONGRESS_API_BASE = "https://api.congress.gov/v3"
@@ -211,8 +211,8 @@ def _score_leg(bills):
         return bills
     bt = "\n".join(f"[{b['bill_id']}] {b['title'][:150]} -- {b['latest_action'][:80]}" for b in bills[:30])
     try:
-        resp = requests.post(f"{GEMINI_BASE}/models/{GEMINI_MODEL}:generateContent",headers={"Content-Type":"application/json"},params={"key":GEMINI_API_KEY},
-            json={"contents":[{"role":"user","parts":[{"text":f"Classify energy bills for stock impact.\nBILLS:\n{bt}\nJSON array: [{{\"bill_id\":\"...\",\"relevance\":0-100,\"sectors\":[...],\"tickers\":[...],\"summary\":\"...\"}}]. Return ONLY JSON."}]}],"generationConfig":{"temperature":0.1,"maxOutputTokens":4096,"thinkingConfig":{"thinkingBudget":0}}},timeout=60)
+        payload = {"contents":[{"role":"user","parts":[{"text":f"Classify energy bills for stock impact.\nBILLS:\n{bt}\nJSON array: [{{\"bill_id\":\"...\",\"relevance\":0-100,\"sectors\":[...],\"tickers\":[...],\"summary\":\"...\"}}]. Return ONLY JSON."}]}],"generationConfig":{"temperature":0.1,"maxOutputTokens":4096,"thinkingConfig":{"thinkingBudget":0}}}
+        resp = llm_post_with_retry(lambda: requests.post(f"{GEMINI_BASE}/models/{GEMINI_MODEL}:generateContent",headers={"Content-Type":"application/json"},params={"key":GEMINI_API_KEY},json=payload,timeout=60))
         resp.raise_for_status(); text = "\n".join(p["text"] for p in resp.json()["candidates"][0]["content"]["parts"] if "text" in p and not p.get("thought"))
         m = re.search(r'\[.*\]',text,re.DOTALL)
         if m:

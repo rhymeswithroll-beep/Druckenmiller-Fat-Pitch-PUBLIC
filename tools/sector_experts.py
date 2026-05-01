@@ -1,5 +1,5 @@
 """Sector Expert Agents — dynamic domain intelligence for displacement detection."""
-import sys, json, re
+import sys, json, re, time
 from datetime import date, datetime
 from pathlib import Path
 _project_root = str(Path(__file__).parent.parent)
@@ -183,25 +183,31 @@ TASK: Identify stocks where the market is CURRENTLY mispricing something specifi
 {{"symbol": "<ticker>", "sector_displacement_score": <0-100>, "consensus_narrative": "<1 sentence>", "variant_narrative": "<1 sentence>", "direction": "bullish"/"bearish", "conviction_level": "high"/"medium"/"low", "key_catalysts": ["<event with date>"], "leading_indicators": ["<measurable thing>"]}}
 
 RULES: Reference SPECIFIC data. Only flag CONCRETE mismatches. Score 80+ only for clear, imminent mispricing. Empty array [] if nothing mispriced. Return JSON array only."""
-    try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=4096,
-            temperature=0.2,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = response.content[0].text.strip()
-        raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
-        raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE)
-        match = re.search(r'\[.*\]', raw, flags=re.DOTALL)
-        if match:
-            raw = match.group(0)
-        results = json.loads(raw)
-        return results if isinstance(results, list) else [results]
-    except Exception as e:
-        print(f"    Claude analysis failed for {expert_config['expert_type']}: {e}")
-        return []
+    for attempt in range(3):
+        try:
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            response = client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=4096,
+                temperature=0.2,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = response.content[0].text.strip()
+            raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
+            raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE)
+            match = re.search(r'\[.*\]', raw, flags=re.DOTALL)
+            if match:
+                raw = match.group(0)
+            results = json.loads(raw)
+            return results if isinstance(results, list) else [results]
+        except anthropic.RateLimitError:
+            wait = 35 * (2 ** attempt)
+            print(f"    [rate-limit] Claude 429 for {expert_config['expert_type']}, waiting {wait}s...")
+            time.sleep(wait)
+        except Exception as e:
+            print(f"    Claude analysis failed for {expert_config['expert_type']}: {e}")
+            return []
+    return []
 
 
 def run():
@@ -268,6 +274,8 @@ def run():
             print(f"  [{expert_name.upper()}] {len(rows)} signals stored")
             for r in sorted(rows, key=lambda x: x[4], reverse=True)[:3]:
                 print(f"    {r[0]}: score={r[4]:.0f} {r[9]} — {r[6][:60]}...")
+        # Pace Claude calls — 12s gap keeps us comfortably under 5 RPM on free tier
+        time.sleep(12)
     print(f"\n  Sector expert analysis complete: {total_signals} new signals, {skipped} sectors from cache")
     print("=" * 60)
 

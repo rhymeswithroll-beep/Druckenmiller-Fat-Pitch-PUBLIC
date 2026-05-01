@@ -2,7 +2,7 @@
 import json, logging, math, re, time
 from datetime import date, datetime, timedelta
 import finnhub, requests
-from tools.db import get_conn, query, upsert_many, init_db
+from tools.db import get_conn, query, upsert_many, init_db, llm_post_with_retry
 from tools.config import (
     FINNHUB_API_KEY, SERPER_API_KEY, GEMINI_API_KEY, GEMINI_BASE, GEMINI_MODEL,
     MA_RUMOR_LOOKBACK_DAYS, MA_RUMOR_HALF_LIFE_DAYS, MA_NEWS_BATCH_SIZE,
@@ -185,9 +185,11 @@ def _classify_llm(batch):
         f'"acquirer_name":"str or null","expected_premium_pct":num_or_null,"target_symbol":"TICKER",'
         f'"price_impact_direction":"up"|"down"|"neutral","rationale":"brief"}}\nReturn ONLY JSON array.')
     try:
-        resp = requests.post(f"{GEMINI_BASE}/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}",
-            json={"contents":[{"parts":[{"text":prompt}]}]}, timeout=60)
-        if resp.status_code!=200: return []
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        resp = llm_post_with_retry(lambda: requests.post(
+            f"{GEMINI_BASE}/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}",
+            json=payload, timeout=60))
+        if resp.status_code != 200: return []
         text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
         return json.loads(re.sub(r"```(?:json)?\s*","",text).strip())
     except Exception as e:

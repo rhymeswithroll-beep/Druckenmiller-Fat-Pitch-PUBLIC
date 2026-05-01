@@ -7,7 +7,7 @@ _project_root = str(Path(__file__).parent.parent)
 if _project_root not in sys.path: sys.path.insert(0, _project_root)
 import requests
 from tools.config import GEMINI_API_KEY, GEMINI_BASE, GEMINI_MODEL
-from tools.db import init_db, upsert_many, query
+from tools.db import init_db, upsert_many, query, llm_post_with_retry
 
 THESIS_DEFINITIONS = {
     "tight_money": {"trigger": lambda s: s.get("fed_funds_score",0)<-5 and s.get("real_rates_score",0)<-3,
@@ -143,13 +143,15 @@ def run():
         if r["symbol"] in top_syms and GEMINI_API_KEY and nc < 15:
             descs = "; ".join(THESIS_DEFINITIONS[t]["description"] for t in st if t in THESIS_DEFINITIONS)
             try:
-                resp = requests.post(f"{GEMINI_BASE}/models/{GEMINI_MODEL}:generateContent",
+                payload = {"contents": [{"parts": [{"text": f"In one sentence (<160 chars), explain why {r['symbol']} ({r['sector']}) expresses: {descs}. Speak like Druckenmiller."}]}],
+                        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 128}}
+                resp = llm_post_with_retry(lambda: requests.post(
+                    f"{GEMINI_BASE}/models/{GEMINI_MODEL}:generateContent",
                     headers={"Content-Type": "application/json"}, params={"key": GEMINI_API_KEY},
-                    json={"contents": [{"parts": [{"text": f"In one sentence (<160 chars), explain why {r['symbol']} ({r['sector']}) expresses: {descs}. Speak like Druckenmiller."}]}],
-                        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 128}}, timeout=15)
+                    json=payload, timeout=15))
                 resp.raise_for_status(); narr = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()[:200]
             except Exception: narr = f"{r['symbol']} ({r['sector']}): {', '.join(st[:2])} thesis. Score {r['score']:.0f}/100."
-            nc += 1; time.sleep(0.3)
+            nc += 1; time.sleep(2)
         else:
             ts = " + ".join(t.replace("_"," ") for t in st[:2])
             narr = f"{r['symbol']} ({r['sector']}): {'best expression of '+ts if ts else 'no active thesis'}. Score {r['score']:.0f}/100."

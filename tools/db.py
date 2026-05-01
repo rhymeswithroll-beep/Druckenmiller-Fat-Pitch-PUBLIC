@@ -84,6 +84,23 @@ def get_sqlite_conn():
     return _get_sqlite()
 
 
+def llm_post_with_retry(post_fn, max_retries: int = 4, base_delay: float = 35.0):
+    """Call post_fn() and retry with exponential backoff on HTTP 429 rate-limit responses.
+
+    post_fn must return a requests.Response.  Raises on non-429 errors or exhausted retries.
+    base_delay=35s keeps free-tier Gemini (2 RPM) and Anthropic (5 RPM) comfortably under limits.
+    """
+    import time as _time
+    for attempt in range(max_retries):
+        resp = post_fn()
+        if resp.status_code != 429:
+            return resp
+        wait = base_delay * (2 ** attempt)
+        print(f"    [rate-limit] 429 received, waiting {wait:.0f}s before retry {attempt + 1}/{max_retries}...")
+        _time.sleep(wait)
+    return post_fn()  # final attempt — let caller handle any error
+
+
 def _init_local_db():
     """Create local SQLite tables if they don't exist."""
     conn = _get_sqlite()
