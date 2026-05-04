@@ -581,7 +581,14 @@ def _evaluate_gates(symbol, data, thresholds, overrides):
     options_flow = data.get("options_flow_score", 0) or 0
     options_dir = data.get("options_direction", "")
     squeeze_score = data.get("squeeze_score", 0) or 0
-    has_any_catalyst_data = (catalyst > 0 or options_flow > 0 or squeeze_score > 0)
+    # options_flow defaults to 50 (neutral) when the module ran but found no signal.
+    # A score of exactly 50 with no direction is neutral, not real bullish/bearish data.
+    # Only count options_flow as "real data" if it has a directional signal.
+    has_any_catalyst_data = (
+        catalyst > 0 or
+        (options_flow > 0 and options_dir not in ("", "neutral")) or
+        squeeze_score > 0
+    )
     if not has_any_catalyst_data:
         catalyst_ok = True  # No catalyst data — bypass rather than wrongly block
     else:
