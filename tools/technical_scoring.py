@@ -259,7 +259,7 @@ def run():
             bench = spy_df
         rs = score_relative_strength(df, bench)
 
-        total = t + m + b + rs + breadth_score
+        total = _clamp(t + m + b + rs + breadth_score, 0, 100)
 
         results.append((symbol, today, t, m, b, rs, breadth_score, round(total, 1)))
 

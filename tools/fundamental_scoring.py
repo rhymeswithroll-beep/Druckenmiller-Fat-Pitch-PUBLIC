@@ -229,16 +229,14 @@ def score_quality_smart_money(fund_df, symbol):
         elif fh_bullish < 25: score -= 1
 
     # FORENSIC ACCOUNTING PENALTIES (from accounting_forensics.py)
+    # forensic_score already incorporates the Beneish M-Score internally;
+    # do NOT also apply a separate forensic_mscore penalty — that's double-counting.
     forensic_score = _get(fund_df, symbol, "forensic_score")
     if forensic_score is not None:
         if forensic_score < 30:
             score -= 3   # Red alert: accounting red flags
         elif forensic_score >= 80:
             score += 2   # Pristine books bonus
-
-    forensic_mscore = _get(fund_df, symbol, "forensic_mscore")
-    if forensic_mscore is not None and forensic_mscore > -1.78:
-        score -= 5   # Beneish M-Score suggests likely manipulation
 
     # FOUNDER LETTER QUALITY (from founder_letter_analyzer.py)
     letter_tier = _get(fund_df, symbol, "letter_tier")
@@ -268,11 +266,11 @@ def run():
 
     symbols = fund_df["symbol"].unique().tolist()
 
-    # Group by sector via sector_name hash
+    # Group by sector string (sector_name stored as text, e.g. "Technology")
     sector_map = {}
     for sym in symbols:
         sec = _get(fund_df, sym, "sector_name")
-        sector_key = int(sec) if sec is not None else 0
+        sector_key = str(sec) if sec is not None else "Unknown"
         sector_map.setdefault(sector_key, []).append(sym)
 
     today = datetime.now().strftime("%Y-%m-%d")
@@ -280,7 +278,7 @@ def run():
 
     for symbol in symbols:
         sec = _get(fund_df, symbol, "sector_name")
-        sector_key = int(sec) if sec is not None else 0
+        sector_key = str(sec) if sec is not None else "Unknown"
         sector_syms = sector_map.get(sector_key, [])
 
         v = score_valuation(fund_df, symbol, sector_syms)
