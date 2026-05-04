@@ -103,7 +103,7 @@ const GATE_COLORS: Record<number, string> = {
 };
 
 const SIGNAL_COLOR: Record<string, string> = {
-  STRONG_BUY: 'text-emerald-400',
+  'STRONG BUY': 'text-emerald-400',
   BUY: 'text-emerald-300',
   NEUTRAL: 'text-gray-400',
   SELL: 'text-rose-400',
@@ -215,7 +215,7 @@ function WaterfallPanel({
 
 // ─── Asset List Panel ────────────────────────────────────────────────────────
 
-const SIGNAL_FILTERS = ['', 'STRONG_BUY', 'BUY', 'NEUTRAL'] as const;
+const SIGNAL_FILTERS = ['', 'STRONG BUY', 'BUY', 'NEUTRAL'] as const;
 type SignalFilter = typeof SIGNAL_FILTERS[number];
 
 function AssetListPanel({
@@ -310,9 +310,9 @@ function AssetListPanel({
                   <ScorePill score={a.convergence_score ?? a.composite_score} />
                 )}
                 <ModeBadge mode={a.entry_mode} />
-                {a.signal && (a.signal === 'BUY' || a.signal === 'STRONG_BUY') && (
+                {a.signal && (a.signal === 'BUY' || a.signal === 'STRONG BUY') && (
                   <span className={`text-[10px] font-mono shrink-0 ${SIGNAL_COLOR[a.signal] || 'text-gray-500'}`}>
-                    {a.signal.replace('_', ' ')}
+                    {a.signal}
                   </span>
                 )}
               </div>

@@ -314,8 +314,8 @@ def main():
     from tools.global_energy_markets import run as run_gem
     _run_phase("Phase 2.7f: Global Energy Markets (10-signal: TTF, flows, CoT, storage)", run_gem)
 
-    from tools.energy_stress_test import run as run_stress
-    _run_phase("Phase 2.7g: Energy Regime & Stress Test (5 scenarios)", run_stress)
+    from tools.energy_stress_test import run as run_energy_stress
+    _run_phase("Phase 2.7g: Energy Regime & Stress Test (5 scenarios)", run_energy_stress)
 
     # ── Phase 2.75: Pattern & Options ──
     from tools.pattern_options import run as run_patterns

@@ -598,7 +598,7 @@ def _evaluate_gates(symbol, data, thresholds, overrides):
     composite = data.get("composite_score", 0) or 0
     signal = data.get("signal", "") or ""
     rr = data.get("rr_ratio", 0) or 0
-    is_buy = signal in ("BUY", "STRONG_BUY")
+    is_buy = signal in ("BUY", "STRONG BUY")
     fat_ok = (
         composite >= g10["min_composite_score"] and
         rr >= g10["min_rr"] and
@@ -645,7 +645,7 @@ def _classify_entry_mode(data: dict, last_gate: int) -> str:
 
     if catalyst_strength >= 75 or catalyst_type in _CATALYST_OVERRIDE_TYPES:
         return "CATALYST"
-    if technical_score >= 65 and signal in ("BUY", "STRONG_BUY"):
+    if technical_score >= 65 and signal in ("BUY", "STRONG BUY"):
         return "MOMENTUM"
     if convergence_score >= 60 and module_count >= 4:
         return "CONVERGENCE"

@@ -62,7 +62,7 @@ def run():
             # Also store sector for sector comparisons
             sector = info.get("sector", "")
             if sector:
-                rows.append((symbol, "sector_name", hash(sector) % 1000))
+                rows.append((symbol, "sector_name", sector))
 
         except Exception:
             errors += 1
