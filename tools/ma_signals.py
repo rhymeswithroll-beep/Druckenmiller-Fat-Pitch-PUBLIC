@@ -2,9 +2,9 @@
 import json, logging, math, re, time
 from datetime import date, datetime, timedelta
 import finnhub, requests
-from tools.db import get_conn, query, upsert_many, init_db, llm_post_with_retry
+from tools.db import get_conn, query, upsert_many, init_db
 from tools.config import (
-    FINNHUB_API_KEY, SERPER_API_KEY, GEMINI_API_KEY, GEMINI_BASE, GEMINI_MODEL,
+    FINNHUB_API_KEY, SERPER_API_KEY, ANTHROPIC_API_KEY,
     MA_RUMOR_LOOKBACK_DAYS, MA_RUMOR_HALF_LIFE_DAYS, MA_NEWS_BATCH_SIZE,
     MA_FINNHUB_DELAY, MA_GEMINI_DELAY, MA_MIN_MARKET_CAP, MA_MAX_MARKET_CAP,
     MA_TARGET_WEIGHT_PROFILE, MA_TARGET_WEIGHT_RUMOR, MA_MIN_SCORE_STORE,
@@ -174,26 +174,37 @@ def _fetch_web(symbols):
         except Exception: pass
     return results
 
-def _classify_llm(batch):
-    if not batch or not GEMINI_API_KEY: return []
-    atxt = "\n".join(f"[{i}] Symbol:{a['symbol']} Headline:{a['headline']} Source:{a['source']} Summary:{a['summary'][:500]}" for i,a in enumerate(batch))
-    prompt = (f"You are an M&A analyst. Classify these articles. Be CONSERVATIVE.\n"
+def _classify_llm(articles):
+    """Classify all M&A articles in a single Claude Haiku call — no rate limit issues."""
+    if not articles or not ANTHROPIC_API_KEY: return []
+    import anthropic
+    atxt = "\n".join(
+        f"[{i}] Symbol:{a['symbol']} Headline:{a['headline']} Source:{a['source']} Summary:{a['summary'][:500]}"
+        for i, a in enumerate(articles)
+    )
+    prompt = (
+        f"You are an M&A analyst. Classify these {len(articles)} articles. Be CONSERVATIVE.\n"
         f"Only credible (>=6) if SPECIFIC details: named acquirer, deal terms, board approval.\n"
         f"Generic 'consolidation' = credibility 1-2.\n\nArticles:\n{atxt}\n\n"
-        f'JSON array per article: {{"index":i,"is_ma_relevant":bool,"credibility":1-10,'
+        f'Return a JSON array with one object per article:\n'
+        f'{{"index":i,"is_ma_relevant":bool,"credibility":1-10,'
         f'"deal_stage":"rumor"|"confirmed_interest"|"definitive_agreement"|"completed"|"denied"|"speculation",'
         f'"acquirer_name":"str or null","expected_premium_pct":num_or_null,"target_symbol":"TICKER",'
-        f'"price_impact_direction":"up"|"down"|"neutral","rationale":"brief"}}\nReturn ONLY JSON array.')
+        f'"price_impact_direction":"up"|"down"|"neutral","rationale":"brief"}}\n'
+        f'Return ONLY the JSON array, no markdown.'
+    )
     try:
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-        resp = llm_post_with_retry(lambda: requests.post(
-            f"{GEMINI_BASE}/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}",
-            json=payload, timeout=60))
-        if resp.status_code != 200: return []
-        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-        return json.loads(re.sub(r"```(?:json)?\s*","",text).strip())
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text.strip()
+        text = re.sub(r"```(?:json)?\s*", "", text).strip()
+        return json.loads(text)
     except Exception as e:
-        logger.warning(f"Gemini M&A error: {e}"); return []
+        logger.warning(f"Claude M&A classification error: {e}"); return []
 
 def _compute_rumor_scores(news, cls_list, existing):
     today = date.today()
@@ -289,15 +300,12 @@ def run():
     top = sorted(tgt_scores.items(), key=lambda x:x[1]["target_score"], reverse=True)[:50]
     scan = list({s for s,_ in top}|set(existing.keys()))
     rum_scores = {}
-    if FINNHUB_API_KEY and GEMINI_API_KEY:
+    if FINNHUB_API_KEY and ANTHROPIC_API_KEY:
         news = _fetch_ma_news(finnhub.Client(api_key=FINNHUB_API_KEY), scan)
         news.extend(_fetch_web([s for s,_ in top[:20]]))
         print(f"  {len(news)} M&A articles")
         if news:
-            all_cls = []
-            for i in range(0,len(news),MA_NEWS_BATCH_SIZE):
-                all_cls.extend(_classify_llm(news[i:i+MA_NEWS_BATCH_SIZE]))
-                if i+MA_NEWS_BATCH_SIZE<len(news): time.sleep(MA_GEMINI_DELAY)
+            all_cls = _classify_llm(news)  # single Claude call — no rate limit loop
             print(f"  Credible: {sum(1 for c in all_cls if c.get('is_ma_relevant') and c.get('credibility',0)>=3)}")
             rum_scores = _compute_rumor_scores(news, all_cls, existing)
     else: print("  Skipping rumor scan (missing API keys)")
