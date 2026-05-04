@@ -18,7 +18,13 @@ from tools.db import init_db, upsert_many, query_df, query
 
 def _get(fund_df, symbol, metric):
     row = fund_df[(fund_df["symbol"] == symbol) & (fund_df["metric"] == metric)]
-    return float(row.iloc[0]["value"]) if not row.empty else None
+    if row.empty:
+        return None
+    val = row.iloc[0]["value"]
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return val  # Return as-is for string metrics (e.g. sector_name)
 
 
 def _clamp(val, lo, hi):
