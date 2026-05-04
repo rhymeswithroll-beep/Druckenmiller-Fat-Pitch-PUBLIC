@@ -270,21 +270,29 @@ def run():
         print("  No fundamental data. Run fetch_fmp_fundamentals.py first.")
         return
 
+    # Extract sector strings BEFORE coercing value column to numeric.
+    # sector_name is stored as text (e.g. "Technology") — all other metrics are numeric.
+    # Keeping the column mixed-type causes pandas .between() to crash.
+    sector_lookup = (
+        fund_df[fund_df["metric"] == "sector_name"]
+        .set_index("symbol")["value"]
+        .to_dict()
+    )
+    fund_df["value"] = pd.to_numeric(fund_df["value"], errors="coerce")
+
     symbols = fund_df["symbol"].unique().tolist()
 
-    # Group by sector string (sector_name stored as text, e.g. "Technology")
+    # Group by sector using the pre-extracted string lookup
     sector_map = {}
     for sym in symbols:
-        sec = _get(fund_df, sym, "sector_name")
-        sector_key = str(sec) if sec is not None else "Unknown"
+        sector_key = str(sector_lookup.get(sym, "Unknown"))
         sector_map.setdefault(sector_key, []).append(sym)
 
     today = datetime.now().strftime("%Y-%m-%d")
     results = []
 
     for symbol in symbols:
-        sec = _get(fund_df, symbol, "sector_name")
-        sector_key = str(sec) if sec is not None else "Unknown"
+        sector_key = str(sector_lookup.get(symbol, "Unknown"))
         sector_syms = sector_map.get(sector_key, [])
 
         v = score_valuation(fund_df, symbol, sector_syms)
