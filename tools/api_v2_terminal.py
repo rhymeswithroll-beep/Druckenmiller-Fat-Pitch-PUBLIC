@@ -139,18 +139,18 @@ def terminal_feed():
     insider_flow = []
     try:
         # insider_signals is a LOCAL_TABLE (SQLite) — use SQLite date syntax
+        # One row per symbol: pick the latest date, then filter by score threshold.
         ins_rows = query("""
             SELECT ins.symbol, ins.insider_score, ins.cluster_buy, ins.cluster_count,
                    ins.unusual_volume_flag, ins.total_buy_value_30d,
                    0 as total_sell_value_30d,
                    ins.narrative, ins.top_buyer, ins.large_buys_count
             FROM insider_signals ins
-            WHERE ins.date >= date('now', '-30 days')
-            AND ins.insider_score >= 25
-            AND ins.insider_score = (
-                SELECT MAX(i2.insider_score) FROM insider_signals i2
+            WHERE ins.date = (
+                SELECT MAX(i2.date) FROM insider_signals i2
                 WHERE i2.symbol = ins.symbol AND i2.date >= date('now', '-30 days')
             )
+            AND ins.insider_score >= 25
             ORDER BY ins.insider_score DESC
             LIMIT 40
         """)
