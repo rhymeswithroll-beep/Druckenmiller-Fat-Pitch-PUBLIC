@@ -138,9 +138,10 @@ def run():
     results.sort(key=lambda x: x["score"], reverse=True)
     top_syms = {r["symbol"] for r in results[:NARRATIVE_TOP_N] if r["sector_tilt"] > 0.2}
     rows, nc = [], 0
+    gemini_quota_exhausted = False  # fail-fast: skip all Gemini calls once quota is hit
     for rank, r in enumerate(results, 1):
         st = [t for t in active_theses if r["symbol"] in THESIS_DEFINITIONS[t].get("tagged_symbols",[]) or r["sector"] in THESIS_DEFINITIONS[t].get("bullish_sectors",[]) or r["sector"] in THESIS_DEFINITIONS[t].get("bearish_sectors",[])]
-        if r["symbol"] in top_syms and GEMINI_API_KEY and nc < 15:
+        if r["symbol"] in top_syms and GEMINI_API_KEY and nc < 15 and not gemini_quota_exhausted:
             descs = "; ".join(THESIS_DEFINITIONS[t]["description"] for t in st if t in THESIS_DEFINITIONS)
             try:
                 payload = {"contents": [{"parts": [{"text": f"In one sentence (<160 chars), explain why {r['symbol']} ({r['sector']}) expresses: {descs}. Speak like Druckenmiller."}]}],
@@ -150,7 +151,11 @@ def run():
                     headers={"Content-Type": "application/json"}, params={"key": GEMINI_API_KEY},
                     json=payload, timeout=15))
                 resp.raise_for_status(); narr = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()[:200]
-            except Exception: narr = f"{r['symbol']} ({r['sector']}): {', '.join(st[:2])} thesis. Score {r['score']:.0f}/100."
+            except Exception as e:
+                narr = f"{r['symbol']} ({r['sector']}): {', '.join(st[:2])} thesis. Score {r['score']:.0f}/100."
+                if "429" in str(e) or "quota" in str(e).lower() or "rate" in str(e).lower():
+                    print("  [worldview] Gemini quota exhausted — skipping remaining AI narratives")
+                    gemini_quota_exhausted = True
             nc += 1; time.sleep(2)
         else:
             ts = " + ".join(t.replace("_"," ") for t in st[:2])
