@@ -1,7 +1,8 @@
 """Variant Perception Engine — find mispricings via implied growth vs base rates."""
 
-import sys, time, argparse
+import sys, time, argparse, logging
 import numpy as np
+import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
@@ -20,6 +21,8 @@ from tools.config import (
 from tools.db import init_db, upsert_many, query, query_df
 from tools.fetch_fmp_fundamentals import fmp_get
 
+logger = logging.getLogger(__name__)
+
 
 def _safe(val, default=None):
     try: return float(val) if val is not None else default
@@ -36,10 +39,45 @@ def get_current_regime():
     return df.iloc[0]["regime"] if not df.empty else "neutral"
 
 
+def _safe_float(val):
+    """Return float or None, handling NaN/None gracefully."""
+    try:
+        f = float(val)
+        return None if np.isnan(f) else f
+    except (TypeError, ValueError):
+        return None
+
+
 def fetch_historical_financials(symbol):
-    return (fmp_get(f"/income-statement/{symbol}", {"period": "annual", "limit": 10}),
-            fmp_get(f"/key-metrics/{symbol}", {"period": "annual", "limit": 10}),
-            fmp_get(f"/enterprise-values/{symbol}", {"period": "annual", "limit": 1}))
+    """Fetch historical financials via yfinance (FMP legacy endpoints discontinued Aug 2025)."""
+    try:
+        ticker = yf.Ticker(symbol)
+        stmt = ticker.income_stmt  # Annual income statement, most-recent column first
+        if stmt is None or stmt.empty:
+            return None, None, None
+
+        income = []
+        for col in stmt.columns:
+            rev = _safe_float(stmt.loc['Total Revenue', col]) if 'Total Revenue' in stmt.index else None
+            ni  = _safe_float(stmt.loc['Net Income', col])    if 'Net Income'    in stmt.index else None
+            oi  = _safe_float(stmt.loc['Operating Income', col]) if 'Operating Income' in stmt.index else None
+            if rev is not None:
+                income.append({'revenue': rev, 'netIncome': ni, 'operatingIncome': oi})
+
+        if not income:
+            return None, None, None
+
+        info    = ticker.info or {}
+        mktcap  = _safe_float(info.get('marketCap'))
+        fcf     = _safe_float(info.get('freeCashflow'))
+        fcf_yield = (fcf / mktcap) if (fcf and mktcap and mktcap > 0) else None
+        key_metrics = [{'freeCashFlowYield': fcf_yield, 'marketCap': mktcap}]
+        ev_data     = [{'enterpriseValue': _safe_float(info.get('enterpriseValue'))}]
+
+        return income, key_metrics, ev_data
+    except Exception as e:
+        logger.debug(f"yfinance fetch failed for {symbol}: {e}")
+        return None, None, None
 
 
 def compute_growth_metrics(income):
@@ -85,53 +123,73 @@ def compute_implied_growth(income, key_metrics, ev_data):
 
 
 def compute_estimate_bias(symbol):
-    data = fmp_get(f"/earnings-surprises/{symbol}")
-    if not data or not isinstance(data, list): return {}
-    biases = []
-    for q in data[:8]:
-        actual, estimated = _safe(q.get("actualEarningResult")), _safe(q.get("estimatedEarning"))
-        if actual is not None and estimated is not None and abs(estimated) > 0.01:
-            biases.append((actual - estimated) / abs(estimated))
-    return {"variant_estimate_bias": round(float(np.mean(biases)), 4)} if len(biases) >= 4 else {}
+    """Compute analyst estimate bias from yfinance earnings history."""
+    try:
+        hist = yf.Ticker(symbol).earnings_history
+        if hist is None or hist.empty:
+            return {}
+        biases = []
+        for _, row in hist.head(8).iterrows():
+            actual    = _safe_float(row.get('epsActual'))
+            estimated = _safe_float(row.get('epsEstimate'))
+            if actual is not None and estimated is not None and abs(estimated) > 0.01:
+                biases.append((actual - estimated) / abs(estimated))
+        return {"variant_estimate_bias": round(float(np.mean(biases)), 4)} if len(biases) >= 4 else {}
+    except Exception:
+        return {}
 
 
 def compute_revision_momentum(symbol):
-    estimates = fmp_get(f"/analyst-estimates/{symbol}", {"period": "annual", "limit": 3})
-    if not estimates or not isinstance(estimates, list) or len(estimates) < 2: return {}
-    est_curr, est_next = estimates[0], estimates[1]
-    rev_curr = _safe(est_curr.get("estimatedRevenueAvg"))
-    rev_next = _safe(est_next.get("estimatedRevenueAvg"))
-    eps_curr = _safe(est_curr.get("estimatedEpsAvg"))
-    eps_next = _safe(est_next.get("estimatedEpsAvg"))
-    momentum = 0
-    if rev_curr and rev_next and rev_curr > 0:
-        rg = (rev_next - rev_curr) / rev_curr
-        momentum += 30 if rg > 0.10 else (15 if rg > 0.05 else (-20 if rg < -0.05 else 0))
-    if eps_curr and eps_next and abs(eps_curr) > 0.01:
-        eg = (eps_next - eps_curr) / abs(eps_curr)
-        momentum += 30 if eg > 0.15 else (15 if eg > 0.05 else (-20 if eg < -0.10 else 0))
-    return {"variant_revision_momentum": max(-100, min(100, momentum)), "_fwd_revenue": rev_curr, "_fwd_eps": eps_curr}
+    """Compute analyst revision momentum from yfinance forward estimates."""
+    try:
+        ticker = yf.Ticker(symbol)
+        info   = ticker.info or {}
+        # yfinance provides current-year vs forward-year EPS/revenue estimates
+        eps_curr = _safe_float(info.get('epsCurrentYear') or info.get('trailingEps'))
+        eps_next = _safe_float(info.get('epsForward') or info.get('forwardEps'))
+        rev_curr = _safe_float(info.get('totalRevenue'))  # TTM revenue as proxy
+        # revenue growth estimate from analyst consensus
+        rev_growth = _safe_float(info.get('revenueGrowth'))
+        rev_next   = (rev_curr * (1 + rev_growth)) if (rev_curr and rev_growth is not None) else None
+        momentum = 0
+        if rev_curr and rev_next and rev_curr > 0:
+            rg = (rev_next - rev_curr) / rev_curr
+            momentum += 30 if rg > 0.10 else (15 if rg > 0.05 else (-20 if rg < -0.05 else 0))
+        if eps_curr and eps_next and abs(eps_curr) > 0.01:
+            eg = (eps_next - eps_curr) / abs(eps_curr)
+            momentum += 30 if eg > 0.15 else (15 if eg > 0.05 else (-20 if eg < -0.10 else 0))
+        if momentum == 0 and eps_curr is None and rev_curr is None:
+            return {}
+        return {"variant_revision_momentum": max(-100, min(100, momentum)), "_fwd_revenue": rev_curr, "_fwd_eps": eps_curr}
+    except Exception:
+        return {}
 
 
 def compute_estimate_crowding(symbol):
-    estimates = fmp_get(f"/analyst-estimates/{symbol}", {"period": "annual", "limit": 3})
-    if not estimates or not isinstance(estimates, list) or not estimates[0]: return {}
-    est = estimates[0]
-    metrics = {}
-    eps_high, eps_low, eps_avg = _safe(est.get("estimatedEpsHigh")), _safe(est.get("estimatedEpsLow")), _safe(est.get("estimatedEpsAvg"))
-    rev_high, rev_low, rev_avg = _safe(est.get("estimatedRevenueHigh")), _safe(est.get("estimatedRevenueLow")), _safe(est.get("estimatedRevenueAvg"))
-    if eps_high is not None and eps_low is not None and eps_avg and abs(eps_avg) > 0.01:
-        metrics["variant_eps_spread"] = round((eps_high - eps_low) / abs(eps_avg), 4)
-    if rev_high is not None and rev_low is not None and rev_avg and rev_avg > 0:
-        metrics["variant_rev_spread"] = round((rev_high - rev_low) / rev_avg, 4)
-    spreads = [v for k, v in metrics.items() if "spread" in k]
-    if spreads:
-        avg_s = float(np.mean(spreads))
-        if avg_s < CONSENSUS_CROWDING_NARROW_PCT: metrics["variant_crowding_score"] = -30
-        elif avg_s < 0.15: metrics["variant_crowding_score"] = -10
-        elif avg_s > CONSENSUS_CROWDING_WIDE_PCT: metrics["variant_crowding_score"] = 15
-        else: metrics["variant_crowding_score"] = 0
-    return metrics
+    """Compute analyst estimate crowding from yfinance target price spread."""
+    try:
+        rows = query(
+            "SELECT metric, value FROM fundamentals WHERE symbol = ? AND metric IN "
+            "('analyst_target_high', 'analyst_target_low', 'analyst_target_consensus')",
+            [symbol]
+        )
+        if not rows:
+            return {}
+        data = {r["metric"]: r["value"] for r in rows}
+        target_high = _safe_float(data.get("analyst_target_high"))
+        target_low  = _safe_float(data.get("analyst_target_low"))
+        target_avg  = _safe_float(data.get("analyst_target_consensus"))
+        metrics = {}
+        if target_high is not None and target_low is not None and target_avg and target_avg > 0:
+            spread = (target_high - target_low) / target_avg
+            metrics["variant_rev_spread"] = round(spread, 4)
+            if spread < CONSENSUS_CROWDING_NARROW_PCT:   metrics["variant_crowding_score"] = -30
+            elif spread < 0.15:                          metrics["variant_crowding_score"] = -10
+            elif spread > CONSENSUS_CROWDING_WIDE_PCT:   metrics["variant_crowding_score"] = 15
+            else:                                        metrics["variant_crowding_score"] = 0
+        return metrics
+    except Exception:
+        return {}
 
 
 def compute_herding_score(symbol):
@@ -322,7 +380,7 @@ def run(symbols=None):
 
     # Cache-gate: skip symbols already computed within last 3 days
     cached = {r["symbol"] for r in query(
-        "SELECT DISTINCT symbol FROM variant_analysis WHERE date >= (CURRENT_DATE - INTERVAL '3 days')::text"
+        "SELECT DISTINCT symbol FROM variant_analysis WHERE date >= date('now', '-3 days')"
     )}
     # Always re-run symbols with recent buy signals (they may have moved)
     priority = {r["symbol"] for r in query(
