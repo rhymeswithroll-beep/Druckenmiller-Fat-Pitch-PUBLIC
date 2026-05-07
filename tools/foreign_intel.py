@@ -1,10 +1,15 @@
-"""Foreign Intelligence — discover, translate, score foreign-language financial articles."""
+"""Foreign Intelligence — discover, translate, score foreign-language financial articles.
+
+Translation: Claude reads articles in their native language directly (no DeepL).
+Claude natively handles ja/ko/zh/de/fr/it with better financial-domain comprehension
+than a translation API pre-step.
+"""
 import json, time, logging, requests
 import anthropic
 from datetime import datetime, date
 from tools.db import get_conn, query
 from tools.config import (
-    SERPER_API_KEY, FIRECRAWL_API_KEY, ANTHROPIC_API_KEY, CLAUDE_MODEL, DEEPL_API_KEY,
+    SERPER_API_KEY, FIRECRAWL_API_KEY, ANTHROPIC_API_KEY, CLAUDE_MODEL,
     FOREIGN_INTEL_SOURCES, MARKET_LANGUAGE, MARKET_SERPER_PARAMS,
     FOREIGN_INTEL_MAX_ARTICLES_PER_SOURCE, FOREIGN_INTEL_MAX_CHARS_TRANSLATE,
     FOREIGN_INTEL_FULL_TEXT_THRESHOLD, FOREIGN_INTEL_FULL_TEXT_MAX_CHARS,
@@ -53,34 +58,14 @@ def _scrape_article(url):
     except Exception as e:
         logger.error(f"Firecrawl scrape failed for {url}: {e}"); _cache_url(url, "failed"); return None
 
-def _translate_deepl(text, source_lang):
-    if not DEEPL_API_KEY or not text: return text, 0
-    try:
-        base = "https://api-free.deepl.com" if "free" in DEEPL_API_KEY.lower() or ":fx" in DEEPL_API_KEY else "https://api.deepl.com"
-        resp = requests.post(f"{base}/v2/translate",
-            headers={"Authorization": f"DeepL-Auth-Key {DEEPL_API_KEY}"},
-            data={"text": text, "source_lang": source_lang, "target_lang": "EN"}, timeout=20)
-        resp.raise_for_status()
-        return resp.json()["translations"][0]["text"], len(text)
-    except Exception as e:
-        logger.error(f"DeepL translation failed: {e}"); return text, 0
-
 def _translate_tiered(title, body, language):
-    sl = LANG_MAP.get(language, "")
-    total = 0
-    title_t, c = _translate_deepl(title, sl); total += c
-    snippet_t, c = _translate_deepl(body[:500] if body else "", sl); total += c
-    body_t = snippet_t
-    if len(body) > 500:
-        more_t, c = _translate_deepl(body[500:FOREIGN_INTEL_MAX_CHARS_TRANSLATE], sl); total += c
-        body_t = snippet_t + " " + more_t
-    return {"title_translated": title_t, "body_translated": body_t, "translation_method": "deepl", "char_count": total}
-
-def _translate_tier3(body, language, existing_chars):
-    remaining = body[FOREIGN_INTEL_MAX_CHARS_TRANSLATE:FOREIGN_INTEL_FULL_TEXT_MAX_CHARS]
-    if not remaining: return "", existing_chars
-    t, c = _translate_deepl(remaining, LANG_MAP.get(language, ""))
-    return t, existing_chars + c
+    """Pass article text through directly — Claude reads native language."""
+    return {
+        "title_translated": title,
+        "body_translated": body[:FOREIGN_INTEL_MAX_CHARS_TRANSLATE] if body else "",
+        "translation_method": "claude_native",
+        "char_count": 0,
+    }
 
 def _calibrate_sentiment(raw, language):
     cal = SENTIMENT_CALIBRATION.get(language, 1.0)
@@ -93,13 +78,16 @@ def _analyze_with_claude(title, body, language, market, ticker_map):
     if not ANTHROPIC_API_KEY: return None
     known = ", ".join(f"{n} ({t})" for n, t in list(ticker_map.items())[:50]
                       if not n.endswith((".T",".KS",".HK",".DE",".PA",".MI",".AS",".SW",".L")))
-    prompt = f"""Financial analyst extracting trading signals from translated {language} article.
+    lang_names = {"ja": "Japanese", "ko": "Korean", "zh": "Chinese", "de": "German", "fr": "French", "it": "Italian"}
+    lang_label = lang_names.get(language, language.upper())
+    prompt = f"""You are a financial analyst extracting trading signals from a {lang_label}-language article. Read the original {lang_label} text directly — do not translate, just extract the signals.
+
 TITLE: {title}
 BODY: {body[:3000]}
 KNOWN COMPANIES: {known}
-Return JSON: {{"sentiment": float -1..1, "relevance_score": int 0-100, "key_themes": [1-3 tags],
-"mentioned_tickers": [ADR tickers], "bullish_for": [tickers], "bearish_for": [tickers], "summary": "2-3 sentences"}}
-Only output valid JSON."""
+
+Return ONLY valid JSON with no other text:
+{{"sentiment": <float -1..1>, "relevance_score": <int 0-100>, "key_themes": [<1-3 short English tags>], "mentioned_tickers": [<US/ADR ticker symbols>], "bullish_for": [<tickers>], "bearish_for": [<tickers>], "summary": "<2-3 sentences in English summarizing the key financial signals>"}}"""
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         response = client.messages.create(
@@ -164,13 +152,11 @@ def run(markets=None):
                     if not analysis: _cache_url(article["url"], "analysis_failed"); continue
                     rel = analysis.get("relevance_score", 0)
                     if rel >= FOREIGN_INTEL_FULL_TEXT_THRESHOLD and len(body) > FOREIGN_INTEL_MAX_CHARS_TRANSLATE:
-                        extra, total_chars = _translate_tier3(body, language, total_chars)
-                        if extra:
-                            full = translation["body_translated"] + " " + extra
-                            analysis = _analyze_with_claude(translation["title_translated"],
-                                full, language, market, ticker_map) or analysis
-                            translation["body_translated"] = full
-                            translation["translation_method"] = "deepl_full"
+                        full_body = body[:FOREIGN_INTEL_FULL_TEXT_MAX_CHARS]
+                        analysis = _analyze_with_claude(translation["title_translated"],
+                            full_body, language, market, ticker_map) or analysis
+                        translation["body_translated"] = full_body
+                        translation["translation_method"] = "claude_native_full"
                     mentioned = analysis.get("mentioned_tickers", [])
                     if not mentioned:
                         resolved = resolve_ticker(article.get("title",""), market)
