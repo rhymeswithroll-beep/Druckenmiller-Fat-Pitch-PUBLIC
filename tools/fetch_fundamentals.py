@@ -25,6 +25,11 @@ METRIC_MAP = {
     "enterpriseValue":   "enterprise_value",
     "sharesOutstanding": "shares_outstanding",
     "heldPercentInsiders": "insider_pct",
+    # Analyst targets — refreshed daily from same ticker.info call
+    "targetMeanPrice":           "analyst_target_consensus",
+    "targetHighPrice":           "analyst_target_high",
+    "targetLowPrice":            "analyst_target_low",
+    "numberOfAnalystOpinions":   "analyst_rating_count",
 }
 
 
