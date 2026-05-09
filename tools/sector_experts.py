@@ -274,8 +274,8 @@ def run():
             print(f"  [{expert_name.upper()}] {len(rows)} signals stored")
             for r in sorted(rows, key=lambda x: x[4], reverse=True)[:3]:
                 print(f"    {r[0]}: score={r[4]:.0f} {r[9]} — {r[6][:60]}...")
-        # Pace Claude calls — 12s gap keeps us comfortably under 5 RPM on free tier
-        time.sleep(12)
+        # Pace Claude calls — 35s gap stays well under rate limits across all tiers
+        time.sleep(35)
     print(f"\n  Sector expert analysis complete: {total_signals} new signals, {skipped} sectors from cache")
     print("=" * 60)
 

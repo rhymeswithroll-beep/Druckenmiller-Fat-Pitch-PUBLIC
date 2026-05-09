@@ -64,9 +64,11 @@ def run():
             if fcf and mcap and mcap > 0:
                 rows.append((symbol, "fcf_yield", fcf / mcap))
 
-            # Also store sector for sector comparisons
+            # Also store sector for sector comparisons.
+            # Guard: only store if it's a non-empty string that isn't numeric
+            # (yfinance occasionally returns a float for obscure tickers).
             sector = info.get("sector", "")
-            if sector:
+            if sector and isinstance(sector, str) and not sector.replace(".", "").isnumeric():
                 rows.append((symbol, "sector_name", sector))
 
         except Exception:

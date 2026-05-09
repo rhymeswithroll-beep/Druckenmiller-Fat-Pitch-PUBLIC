@@ -9,6 +9,7 @@ import pandas as pd
 from datetime import datetime
 from tools.config import (
     REGIME_WEIGHTS, SIGNAL_THRESHOLDS, MIN_RR_RATIO, ATR_PERIOD,
+    PORTFOLIO_VALUE, RISK_PER_TRADE_BUY, RISK_PER_TRADE_STRONG, MAX_POSITION_PCT,
 )
 from tools.db import init_db, upsert_many, query_df
 
@@ -234,13 +235,23 @@ def run():
             analyst_targets.get(symbol)
         )
 
+        # Position sizing — risk-based (1% risk for BUY, 2% for STRONG BUY)
+        risk_pct = RISK_PER_TRADE_STRONG if signal == "STRONG BUY" else RISK_PER_TRADE_BUY
+        dollar_risk = PORTFOLIO_VALUE * risk_pct
+        pos_shares = min(
+            dollar_risk / risk,                                # shares to risk $dollar_risk
+            PORTFOLIO_VALUE * MAX_POSITION_PCT / entry_price,  # hard cap: max position size
+        )
+        pos_shares = round(max(pos_shares, 0), 2)
+        pos_dollars = round(pos_shares * entry_price, 2)
+
         results.append((
             symbol, today, asset_class,
             round(macro_normalized, 1), round(tech_score, 1), round(fund_score, 1),
             round(composite, 1), signal,
             round(entry_price, 4), round(stop_loss, 4), round(target_price, 4),
             round(rr_ratio, 2),
-            None, None,  # Position size calculated separately
+            pos_shares, pos_dollars,
         ))
 
     upsert_many(

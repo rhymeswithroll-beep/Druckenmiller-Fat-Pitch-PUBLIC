@@ -13,6 +13,10 @@ Checks:
 
 import json
 import logging
+import smtplib
+import ssl
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import date, datetime
 from tools.db import query, get_sqlite_conn
 
@@ -336,6 +340,60 @@ def _init_health_table():
         conn.close()
 
 
+# ── Email Alert ───────────────────────────────────────────────────────────────
+
+def _send_health_alert(overall: str, issues: list, today_str: str):
+    """Send email alert when pipeline health status is 'fail'.
+
+    Uses SMTP_USER / SMTP_PASS / EMAIL_TO from .env. Silently skips if
+    credentials are missing (non-fatal — health check is still persisted to DB).
+    """
+    try:
+        from tools.config import SMTP_USER, SMTP_PASS, EMAIL_TO
+    except ImportError:
+        return
+
+    if not SMTP_USER or not SMTP_PASS or not EMAIL_TO:
+        return
+
+    fail_issues = [i for i in issues if i["status"] == "fail"]
+    warn_issues = [i for i in issues if i["status"] == "warn"]
+
+    subject = f"🚨 Pipeline Health FAIL — {today_str} ({len(fail_issues)} failures)"
+
+    lines = [
+        f"Pipeline health check for {today_str} returned status: {overall.upper()}",
+        f"{len(fail_issues)} FAIL / {len(warn_issues)} WARN",
+        "",
+        "── FAILURES ──",
+    ]
+    for i in fail_issues:
+        lines.append(f"  ✗ [{i['category'].upper()}] {i['check']}: {i['detail']}")
+    if warn_issues:
+        lines += ["", "── WARNINGS ──"]
+        for i in warn_issues:
+            lines.append(f"  ⚠ [{i['category'].upper()}] {i['check']}: {i['detail']}")
+    lines += ["", "Check the dashboard or pipeline logs for details."]
+    body = "\n".join(lines)
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = SMTP_USER
+    msg["To"] = EMAIL_TO
+    msg.attach(MIMEText(body, "plain"))
+
+    try:
+        context = ssl.create_default_context()
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.ehlo()
+            server.starttls(context=context)
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail(SMTP_USER, EMAIL_TO, msg.as_string())
+        print(f"  📧 Health alert emailed to {EMAIL_TO}")
+    except Exception as e:
+        print(f"  [health] Email alert failed (non-fatal): {e}")
+
+
 # ── Main Entry Point ───────────────────────────────────────────────────────────
 
 def run():
@@ -424,6 +482,11 @@ def run():
         conn.close()
 
     print(f"\n  Health check saved to pipeline_health table.")
+
+    # Fire email alert on hard failures only (warn is noise; fail needs attention)
+    if overall == "fail":
+        _send_health_alert(overall, total_issues, today_str)
+
     return summary
 
 
