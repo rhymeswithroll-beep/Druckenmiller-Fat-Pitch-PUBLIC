@@ -51,46 +51,80 @@ def compute_atr(price_df, symbol, period=ATR_PERIOD):
 
 
 def compute_stop_loss(current_price, atr, dma50):
-    """Compute stop loss: lower of 2x ATR or below 50 DMA."""
+    """Stop loss: tighter of 1.5x ATR or 3% below 50 DMA. Hard cap at 12% max loss.
+
+    Tighter stops force honest R:R — a 30% stop on a volatile stock produces
+    a mathematically valid but operationally useless number.
+    """
     stops = []
     if atr is not None:
-        stops.append(current_price - 2 * atr)
+        stops.append(current_price - 1.5 * atr)
     if dma50 is not None and dma50 > 0:
-        stops.append(dma50 * 0.98)  # 2% below 50 DMA
+        stops.append(dma50 * 0.97)  # 3% below 50 DMA
 
     if not stops:
-        return current_price * 0.90  # Fallback: 10% stop
+        return current_price * 0.92  # Fallback: 8% stop
 
-    return max(min(stops), current_price * 0.70)  # Never more than 30% stop
+    return max(min(stops), current_price * 0.88)  # Hard cap: never more than 12%
 
 
-def compute_target_price(entry_price, stop_loss, price_df, symbol):
-    """Compute target using 52-week high when it gives meaningful R:R, else 2:1 minimum.
+def compute_target_and_rr(entry_price, stop_loss, atr, price_df, symbol, analyst_target):
+    """Compute target price and R:R using analyst consensus as a dual-purpose anchor.
 
-    Real Druckenmiller targets are anchored to prior highs — that's where resistance
-    and natural selling pressure live. If the 52W high is far enough away to give R:R
-    >= 2.0, use it. Otherwise use 2.0x risk as the floor.
+    The core insight: when a momentum stock runs past analyst consensus, that gap
+    is not a data quality problem — it IS the risk. The stock has been levitated
+    by momentum past where fundamentals justify the price.
+
+    Effective risk = max(stop_loss_risk, analyst_gap)
+      - analyst_gap = entry - analyst_target  (when stock is ABOVE consensus)
+      - If analysts still see upside (target > entry), gap = 0, stop dominates
+
+    Target priority:
+      1. Analyst consensus target (if above entry — genuine upside they see)
+      2. 52-week high (if >3% above entry — prior resistance as natural target)
+      3. ATR projection: entry + 4x ATR (momentum extension for breakout stocks)
+
+    Result: R:R is genuinely differentiated —
+      - Stock below analyst target + tight stop = high R:R (good asymmetry)
+      - Stock above analyst target = effective risk is large = low R:R (honest)
+      - No artificial floor: a 0.8 is shown as 0.8, not rounded up to 2.0
     """
-    risk = entry_price - stop_loss
-    if risk <= 0:
-        return entry_price + MIN_RR_RATIO * risk, MIN_RR_RATIO
+    stop_risk = entry_price - stop_loss
+    if stop_risk <= 0:
+        return round(entry_price * 1.08, 4), 0.0
 
-    # Compute 52-week high from price data
-    sym_prices = price_df[price_df["symbol"] == symbol].sort_values("date")
-    w52_high = None
-    if len(sym_prices) >= 20:
-        lookback = sym_prices.tail(252)  # ~1 year of trading days
-        w52_high = float(lookback["high"].max())
+    # Analyst gap: how far stock has run above analyst consensus (0 if analysts bullish)
+    analyst_gap = 0.0
+    if analyst_target and analyst_target > 0:
+        analyst_gap = max(0.0, entry_price - analyst_target)
 
-    # Use 52-week high as target if it gives R:R >= 2.0 and is above entry
-    if w52_high is not None and w52_high > entry_price + MIN_RR_RATIO * risk:
-        target = w52_high
-        rr = (target - entry_price) / risk
-        return round(target, 4), round(rr, 2)
+    # Effective risk: larger of trading stop risk or fundamental reversion gap
+    effective_risk = max(stop_risk, analyst_gap)
 
-    # Fall back to minimum R:R target
-    target = entry_price + MIN_RR_RATIO * risk
-    return round(target, 4), MIN_RR_RATIO
+    # Upside target
+    target = None
+
+    # 1. Analyst consensus — only use if they still see meaningful upside (>3%)
+    if analyst_target and analyst_target > entry_price * 1.03:
+        target = analyst_target
+
+    # 2. 52-week high — only if meaningfully above entry (>3%)
+    if target is None:
+        sym_prices = price_df[price_df["symbol"] == symbol].sort_values("date")
+        if len(sym_prices) >= 20:
+            w52_high = float(sym_prices.tail(252)["high"].max())
+            if w52_high > entry_price * 1.03:
+                target = w52_high
+
+    # 3. ATR projection: entry + 4x ATR (momentum extension)
+    if target is None:
+        atr_val = atr if atr is not None else stop_risk / 1.5
+        target = entry_price + 4.0 * atr_val
+
+    upside = target - entry_price
+    rr = round(upside / effective_risk, 2) if effective_risk > 0 else 0.0
+
+    return round(target, 4), rr
 
 
 def run():
@@ -118,6 +152,16 @@ def run():
         ON f.symbol = m.symbol AND f.date = m.max_date
     """)
     price_df = query_df("SELECT * FROM price_data")
+
+    # Load analyst consensus targets — used as dual-purpose anchor in R:R calc
+    analyst_df = query_df(
+        "SELECT symbol, value FROM fundamentals WHERE metric = 'analyst_target_consensus'"
+    )
+    analyst_targets = (
+        dict(zip(analyst_df["symbol"], analyst_df["value"]))
+        if not analyst_df.empty else {}
+    )
+    print(f"  Analyst targets loaded: {len(analyst_targets)} symbols")
 
     if tech_df.empty:
         print("  No technical scores. Run technical_scoring.py first.")
@@ -185,7 +229,10 @@ def run():
         if risk <= 0:
             continue
 
-        target_price, rr_ratio = compute_target_price(entry_price, stop_loss, price_df, symbol)
+        target_price, rr_ratio = compute_target_and_rr(
+            entry_price, stop_loss, atr, price_df, symbol,
+            analyst_targets.get(symbol)
+        )
 
         results.append((
             symbol, today, asset_class,
