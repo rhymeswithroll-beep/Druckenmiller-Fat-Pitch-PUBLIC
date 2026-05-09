@@ -54,27 +54,15 @@ MODULE_SCORE_QUERIES: dict[str, str] = {
         WHERE conviction_score IS NOT NULL
     """,
     "news_sentiment": """
-        SELECT symbol, date, AVG(sentiment) AS score
+        SELECT symbol, date, AVG(bullish_pct) AS score
         FROM news_sentiment
+        WHERE bullish_pct IS NOT NULL
         GROUP BY symbol, date
     """,
-    "estimate_momentum": """
-        SELECT symbol, date, score
+    "alt_data": """
+        SELECT symbol, date, alt_data_score AS score
         FROM alt_data_scores
-        WHERE source = 'estimate_momentum'
-          AND score IS NOT NULL
-    """,
-    "alternative_data": """
-        SELECT symbol, date, AVG(score) AS score
-        FROM alt_data_scores
-        WHERE source != 'estimate_momentum'
-        GROUP BY symbol, date
-    """,
-    "pairs": """
-        SELECT symbol, date, score
-        FROM alt_data_scores
-        WHERE source = 'pairs'
-          AND score IS NOT NULL
+        WHERE alt_data_score IS NOT NULL
     """,
     "foreign_intel": """
         SELECT symbol, date, score
@@ -128,10 +116,22 @@ def _load_macro_regimes() -> pd.Series:
 
 
 def _load_module_scores(module: str, sql: str) -> pd.DataFrame:
-    """Return DataFrame with columns [symbol, date, score]."""
+    """Return DataFrame with columns [symbol, date, score].
+
+    LOCAL_TABLE modules (foreign_intel, news_sentiment, alt_data) are queried
+    directly via SQLite to avoid Neon routing for tables that don't exist in Postgres.
+    """
+    _LOCAL_IC_MODULES = {"foreign_intel", "news_sentiment", "alt_data"}
     try:
-        df = query_df(sql)
-        if df.empty:
+        if module in _LOCAL_IC_MODULES:
+            # Force SQLite — these tables are LOCAL_TABLES not in Neon
+            rows = query(sql)  # query() auto-routes LOCAL_TABLES to SQLite
+        else:
+            rows = query(sql)
+        if not rows:
+            return pd.DataFrame(columns=["symbol", "date", "score"])
+        df = pd.DataFrame(rows)
+        if "score" not in df.columns:
             return pd.DataFrame(columns=["symbol", "date", "score"])
         df["date"] = pd.to_datetime(df["date"])
         df["score"] = pd.to_numeric(df["score"], errors="coerce")
@@ -420,6 +420,7 @@ def run() -> None:
     _write_module_ranking(today_str)
 
     logger.info("signal_ic: complete")
+    print(f"  IC results: {len(ic_result_rows)} rows | summaries: {len(summary_rows)} rows")
 
 
 def _write_module_ranking(report_date: str) -> None:
@@ -433,6 +434,15 @@ def _write_module_ranking(report_date: str) -> None:
         ORDER BY avg_ic DESC
     """)
     if rows:
+        print("  Module IC Rankings (5/10/20d horizons, all regimes):")
+        for r in rows:
+            sig_flag = " *" if (r["sig_rate"] or 0) >= 0.5 else ""
+            print(
+                f"    {r['module']:25s}  IC={r['avg_ic'] or 0:+.4f}  "
+                f"IR={r['avg_ir'] or 0:+.2f}  "
+                f"sig={((r['sig_rate'] or 0)*100):.0f}%  "
+                f"n={int(r['avg_dates'] or 0)}d{sig_flag}"
+            )
         logger.info("signal_ic: module IC ranking (5/10/20d, all regimes):")
         for r in rows:
             logger.info(

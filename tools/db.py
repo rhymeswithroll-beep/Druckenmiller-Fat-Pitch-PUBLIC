@@ -313,6 +313,12 @@ def _init_local_db():
         for _col_sql in [
             "ALTER TABLE insider_transactions ADD COLUMN is_10b51_planned INTEGER DEFAULT 0",
             "ALTER TABLE edgar_insider_raw ADD COLUMN is_10b51_planned INTEGER DEFAULT 0",
+            # news_sentiment: migrate from old (source/sentiment/relevance) to aggregated schema
+            "ALTER TABLE news_sentiment ADD COLUMN bearish_pct REAL",
+            "ALTER TABLE news_sentiment ADD COLUMN bullish_pct REAL",
+            "ALTER TABLE news_sentiment ADD COLUMN buzz_score REAL",
+            "ALTER TABLE news_sentiment ADD COLUMN articles_count REAL",
+            "ALTER TABLE news_sentiment ADD COLUMN total_news_7d INTEGER",
         ]:
             try:
                 conn.execute(_col_sql)
@@ -416,6 +422,7 @@ _CONNECT_KWARGS = {
     "keepalives_idle": 60,
     "keepalives_interval": 10,
     "keepalives_count": 5,
+    "connect_timeout": 10,  # fail fast if Neon is unreachable — never hang pipeline init
 }
 
 
@@ -761,7 +768,11 @@ def init_db():
         _init_db_done = True
     # Always init local SQLite first — no network dependency
     _init_local_db()
-    conn = get_conn()
+    try:
+        conn = get_conn()
+    except Exception as _pg_err:
+        print(f"  [init_db] Neon unreachable ({_pg_err}) — running SQLite-only mode. All LOCAL_TABLES still available.")
+        return
     cur = conn.cursor()
     try:
         # Advisory lock: serialises init_db across all processes/workers on this DB.
