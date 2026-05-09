@@ -439,6 +439,10 @@ def main():
     from tools.check_alerts import run as run_alerts
     _run_phase("Phase 4: Check Alerts", run_alerts)
 
+    # ── Phase 5: Data Health Check ──
+    from tools.pipeline_health import run as run_health
+    _run_phase("Phase 5: Pipeline Data Health Check", run_health, skip_if_done=False)
+
     # ── Summary ──
     total = time.time() - pipeline_start
     today = date.today().isoformat()

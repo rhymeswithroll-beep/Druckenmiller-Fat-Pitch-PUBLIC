@@ -67,6 +67,7 @@ LOCAL_TABLES = frozenset({
     "ai_exec_url_cache",            # AI exec URL cache
     "alternative_data",             # Alt data signals (weather, crop, etc.) — pipeline-local
     "alt_data_scores",              # Aggregated alt data scores per symbol — pipeline-local
+    "pipeline_health",              # Phase 5 health check results — daily quality report
 })
 
 

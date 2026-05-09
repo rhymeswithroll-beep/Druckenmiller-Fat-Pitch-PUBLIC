@@ -363,6 +363,45 @@ def health():
     }
 
 
+@router.get("/api/pipeline-health")
+def pipeline_health(limit: int = 7):
+    """Pipeline data health check results — last N runs."""
+    import json as _json
+    rows = safe_query(
+        "SELECT * FROM pipeline_health ORDER BY run_date DESC LIMIT ?", [limit]
+    )
+    if not rows:
+        return {"status": "no_data", "runs": [], "detail": "Run pipeline first to generate health data"}
+
+    result = []
+    for row in rows:
+        entry = {
+            "run_date":      row["run_date"],
+            "overall_status": row["overall_status"],
+            "created_at":    row.get("created_at"),
+        }
+        # Parse JSON blobs
+        for field in ("freshness_json", "coverage_json", "distribution_json", "sentinels_json", "cross_table_json", "summary_json"):
+            key = field.replace("_json", "")
+            try:
+                entry[key] = _json.loads(row[field]) if row.get(field) else {}
+            except Exception:
+                entry[key] = {}
+        result.append(entry)
+
+    latest = result[0]
+    issue_count = latest.get("summary", {}).get("issue_count", 0)
+    issues = latest.get("summary", {}).get("issues", [])
+
+    return {
+        "status":       latest["overall_status"],
+        "issue_count":  issue_count,
+        "issues":       issues,
+        "latest_run":   latest["run_date"],
+        "runs":         result,
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # CROSS-ASSET SCREENER
 # ═══════════════════════════════════════════════════════════════════════

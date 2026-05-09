@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { api, type MacroData, type Breadth, type ConvergenceSignal, type ConvergenceDelta, type SignalChange, type Signal, type ConsensusBlindspotSignal, type HeatIndex } from '@/lib/api';
 import SignalBadge from '@/components/SignalBadge';
+import PipelineHealthBanner from '@/components/PipelineHealthBanner';
 import ConvergenceHeatmap from '@/components/ConvergenceHeatmap';
 import TradeRangeBar from '@/components/TradeRangeBar';
 import ModuleStrip from '@/components/ModuleStrip';
@@ -78,6 +79,7 @@ export default function HomeContent() {
 
   return (
     <div className="space-y-5 animate-fade-in">
+      <PipelineHealthBanner />
       <div className="flex items-center gap-4 flex-wrap">
         {macro?.regime && (
           <div className={`${regimeClass(macro.regime)} flex items-center gap-2`}>
