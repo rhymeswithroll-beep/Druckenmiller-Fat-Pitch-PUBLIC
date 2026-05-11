@@ -55,12 +55,13 @@ def _load_catalysts():
     ):
         add(r["symbol"], "M&A", r["ma_score"], 0, f"Deal stage: {r.get('deal_stage', 'rumor')}")
 
-    # 2. Insider cluster buy
+    # 2. Insider cluster buy — require cluster_count >= 5 to avoid flagging routine dual-buyer events
     for r in query(
         f"SELECT symbol, cluster_buy, total_buy_value_30d, cluster_count "
-        f"FROM insider_signals WHERE cluster_buy = 1 AND date >= '{lookback_30}'"
+        f"FROM insider_signals WHERE cluster_buy = 1 AND (cluster_count IS NULL OR cluster_count >= 5) "
+        f"AND date >= '{lookback_14}'"
     ):
-        strength = min(100, 60 + ((r.get("cluster_count") or 2) - 2) * 10)
+        strength = min(100, 60 + ((r.get("cluster_count") or 5) - 2) * 10)
         add(r["symbol"], "INSIDER_CLUSTER", strength, 0,
             f"${(r.get('total_buy_value_30d') or 0):,.0f} cluster buy")
 
@@ -91,10 +92,10 @@ def _load_catalysts():
         add(r["symbol"], "PATTERN_BREAKOUT", r["pattern_options_score"], 0,
             f"Pattern: {r.get('top_pattern', 'breakout')}")
 
-    # 5. Analyst upgrade
+    # 5. Analyst upgrade — threshold 80 (was 70) to select genuine top-tier consensus
     for r in query(
         f"SELECT symbol, composite_score, consensus_grade "
-        f"FROM analyst_scores WHERE composite_score >= 70 "
+        f"FROM analyst_scores WHERE composite_score >= 80 "
         f"AND date >= '{lookback_14}'"
     ):
         add(r["symbol"], "ANALYST_UPGRADE", r["composite_score"], 0,

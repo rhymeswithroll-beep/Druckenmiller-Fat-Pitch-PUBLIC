@@ -20,7 +20,7 @@ def _mk(ctype, sev, desc, ma, ma_s, mb, mb_s, gap):
     return {"conflict_type": ctype, "severity": sev, "description": desc,
             "module_a": ma, "module_a_score": ma_s, "module_b": mb, "module_b_score": mb_s, "score_gap": gap}
 
-def _detect_conflicts(symbol: str, scores: dict, insider_score: float = 0) -> list[dict]:
+def _detect_conflicts(symbol: str, scores: dict, insider_score: float = 0, em_data_ok: bool = True) -> list[dict]:
     conflicts = []
     _s = lambda mod: scores.get(mod, 0) or 0
     variant, worldview = _s("variant"), _s("worldview")
@@ -57,8 +57,8 @@ def _detect_conflicts(symbol: str, scores: dict, insider_score: float = 0) -> li
             conflicts.append(_mk("MOMENTUM_VALUE_DIVERGENCE", "MODERATE",
                 f"Value attractive ({variant:.0f}) but momentum weak ({main:.0f}). Value trap risk.",
                 "variant", variant, "main_signal", main, variant - main))
-    # 4. ESTIMATE vs VARIANT
-    if em <= CONFLICT_WEAK_THRESHOLD and variant >= CONFLICT_MIN_SCORE and variant - em >= 40:
+    # 4. ESTIMATE vs VARIANT — only fire when EM data has real velocity (not default/zero-data baseline)
+    if em_data_ok and em <= CONFLICT_WEAK_THRESHOLD and variant >= CONFLICT_MIN_SCORE and variant - em >= 40:
         conflicts.append(_mk("ESTIMATE_VS_VARIANT", "HIGH",
             f"Variant sees undervaluation ({variant:.0f}) but estimates declining ({em:.0f}). Cheap may get cheaper.",
             "variant", variant, "estimate_momentum", em, variant - em))
@@ -94,6 +94,18 @@ def run():
     if not rows:
         print("  No HIGH/NOTABLE signals to check for conflicts"); print("=" * 60); return
     print(f"  Checking {len(rows)} positions for internal contradictions...")
+
+    # Check EM data quality: velocity_score > 0 means real estimate revision data is present.
+    # If median velocity is 0 (all FMP estimate data missing), ESTIMATE_VS_VARIANT would produce
+    # hundreds of false positives — suppress it and note the data gap.
+    em_quality = query(
+        "SELECT AVG(velocity_score) as avg_vel, COUNT(*) as cnt FROM estimate_momentum_signals WHERE date = ?",
+        [today])
+    em_data_ok = bool(em_quality and em_quality[0]["avg_vel"] and em_quality[0]["avg_vel"] > 5)
+    if not em_data_ok:
+        n = em_quality[0]["cnt"] if em_quality else 0
+        print(f"  NOTE: EM velocity data absent (avg_vel~0, n={n}) — suppressing ESTIMATE_VS_VARIANT conflicts")
+
     insider_map = {}
     try:
         ir = query("""SELECT i.symbol, i.insider_score FROM insider_signals i
@@ -110,7 +122,7 @@ def run():
             "alt_data_score", "sector_expert_score", "pairs_score", "ma_score",
             "energy_intel_score", "prediction_markets_score", "pattern_options_score",
             "estimate_momentum_score", "ai_regulatory_score", "consensus_blindspots_score"]}
-        conflicts = _detect_conflicts(symbol, scores, insider_map.get(symbol, 0))
+        conflicts = _detect_conflicts(symbol, scores, insider_map.get(symbol, 0), em_data_ok)
         if conflicts:
             symbols_with_conflicts += 1
             for c in conflicts:
