@@ -49,6 +49,25 @@ def _extract_text_from_filing(url):
         time.sleep(REQUEST_DELAY)
         resp = requests.get(url, headers=EDGAR_HEADERS, timeout=20); resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
+        # If this is a filing index page (-index.htm), follow the first EX-99 or .htm document link
+        if "-index.htm" in url:
+            base_url = url.rsplit("/", 1)[0]
+            # Look for EX-99.1, EX-99, or first .htm/.html document link
+            for link in soup.find_all("a", href=True):
+                href = link["href"]
+                if href.lower().endswith((".htm", ".html")) and "index" not in href.lower():
+                    doc_url = href if href.startswith("http") else f"https://www.sec.gov{href}"
+                    time.sleep(REQUEST_DELAY)
+                    try:
+                        doc_resp = requests.get(doc_url, headers=EDGAR_HEADERS, timeout=20)
+                        doc_resp.raise_for_status()
+                        doc_soup = BeautifulSoup(doc_resp.text, "html.parser")
+                        for tag in doc_soup(["script", "style"]): tag.decompose()
+                        text = re.sub(r"\s+", " ", doc_soup.get_text(separator=" ", strip=True))
+                        if len(text) > 200:
+                            return text
+                    except Exception:
+                        pass
         for tag in soup(["script", "style"]): tag.decompose()
         return re.sub(r"\s+", " ", soup.get_text(separator=" ", strip=True))
     except Exception as e: print(f"    Could not extract filing text: {e}"); return None
@@ -77,14 +96,71 @@ def _compute_score(metrics, sentiment_delta=None, hedging_delta=None):
     if sentiment_delta is not None: s += max(-10, min(10, sentiment_delta * 20))
     return round(max(0, min(100, s)), 2)
 
-def _get_filing_url(hit):
-    src = hit.get("_source", {})
-    acc = src.get("accession_no", "")
-    if not acc: return None
+def _get_cik_and_ticker(src, cik_to_ticker, universe):
+    """Extract CIK and ticker from EDGAR search result _source.
+    Handles both old API (entity_id/accession_no) and new API (ciks/adsh).
+    Returns (cik_str, ticker) or (None, None) if no match."""
+    ticker = None
+    cik_str = None
+
+    # New API format: ciks is a list of CIK strings like ['0000715957']
+    ciks = src.get("ciks", [])
+    if ciks:
+        try:
+            cik_int = int(ciks[0])
+            cik_str = ciks[0].lstrip("0") or "0"
+            ticker = cik_to_ticker.get(cik_int)
+        except (ValueError, TypeError):
+            pass
+
+    # Old API format: entity_id is a single CIK string
+    if not ticker:
+        eid = src.get("entity_id")
+        if eid is not None:
+            try:
+                cik_int = int(eid)
+                cik_str = str(cik_int)
+                ticker = cik_to_ticker.get(cik_int)
+            except (ValueError, TypeError):
+                pass
+
+    # Fallback: parse ticker directly from display_names field
+    # Format: 'COMPANY NAME  (TICK)  (CIK XXXXXXX)' or 'COMPANY  (TICK, TICK-PA)  (CIK ...)'
+    if not ticker or ticker not in universe:
+        display_names = src.get("display_names", [])
+        if display_names:
+            name = display_names[0] if isinstance(display_names, list) else str(display_names)
+            m = re.search(r'\(([A-Z]{1,5})[,\) ]', name)
+            if m:
+                candidate = m.group(1)
+                if candidate in universe:
+                    ticker = candidate
+
+    return cik_str, ticker
+
+
+def _get_filing_url(src, cik_str):
+    """Build an EDGAR filing URL from _source dict and CIK string.
+    Handles both old (accession_no/primary_doc) and new (adsh) API formats."""
+    # New API: adsh field
+    acc = src.get("adsh", "") or src.get("accession_no", "")
+    if not acc:
+        return None
+    acc_clean = acc.replace("-", "")
+
+    # New API: cik from ciks list; old API: entity_id
+    if not cik_str:
+        ciks = src.get("ciks", [])
+        cik_str = ciks[0].lstrip("0") if ciks else src.get("entity_id", "")
+
     primary_doc = src.get("primary_doc", "")
-    entity_id = src.get("entity_id", "")
-    if primary_doc: return f"https://www.sec.gov/Archives/edgar/data/{entity_id}/{acc.replace('-', '')}/{primary_doc}"
-    if entity_id: return f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={entity_id}&type=8-K&dateb=&owner=include&count=1"
+    if primary_doc and cik_str:
+        return f"https://www.sec.gov/Archives/edgar/data/{cik_str}/{acc_clean}/{primary_doc}"
+
+    # Use the filing index page — BeautifulSoup will find the EX-99 document link
+    if cik_str:
+        return f"https://www.sec.gov/Archives/edgar/data/{cik_str}/{acc_clean}/{acc}-index.htm"
+
     return None
 
 def _infer_quarter(filing_date_str):
@@ -113,14 +189,10 @@ def run(gated_symbols=None):
     filings, seen = [], set()
     for hit in hits:
         src = hit.get("_source", {})
-        eid = src.get("entity_id")
-        if eid is None: continue
-        try: cik = int(eid)
-        except (ValueError, TypeError): continue
-        ticker = cik_to_ticker.get(cik)
+        cik_str, ticker = _get_cik_and_ticker(src, cik_to_ticker, universe)
         if ticker is None or ticker not in universe or ticker in seen: continue
         seen.add(ticker)
-        url = _get_filing_url(hit)
+        url = _get_filing_url(src, cik_str)
         if url: filings.append({"symbol": ticker, "filing_url": url, "filing_date": src.get("file_date", date.today().isoformat())})
         if len(filings) >= MAX_FILINGS: break
     print(f"  Matched {len(filings)} filings to universe")
