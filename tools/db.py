@@ -319,6 +319,12 @@ def _init_local_db():
             "ALTER TABLE news_sentiment ADD COLUMN buzz_score REAL",
             "ALTER TABLE news_sentiment ADD COLUMN articles_count REAL",
             "ALTER TABLE news_sentiment ADD COLUMN total_news_7d INTEGER",
+            # estimate_snapshots: new schema adds _avg/_high/_low suffixes and num_analysts
+            "ALTER TABLE estimate_snapshots ADD COLUMN eps_current_avg REAL",
+            "ALTER TABLE estimate_snapshots ADD COLUMN eps_current_high REAL",
+            "ALTER TABLE estimate_snapshots ADD COLUMN eps_current_low REAL",
+            "ALTER TABLE estimate_snapshots ADD COLUMN rev_current_avg REAL",
+            "ALTER TABLE estimate_snapshots ADD COLUMN num_analysts INTEGER",
         ]:
             try:
                 conn.execute(_col_sql)
@@ -840,7 +846,7 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS prediction_market_signals (symbol TEXT, date TEXT, pm_score REAL, market_count INTEGER, net_impact REAL, status TEXT, narrative TEXT, sector TEXT, details TEXT, PRIMARY KEY (symbol, date))""",
             """CREATE TABLE IF NOT EXISTS prediction_market_raw (market_id TEXT, date TEXT, question TEXT, impact_category TEXT, yes_probability REAL, volume REAL, liquidity REAL, direction TEXT, confidence REAL, specific_symbols TEXT, rationale TEXT, end_date TEXT, probability REAL, category TEXT, relevance TEXT, PRIMARY KEY (market_id, date))""",
             """CREATE TABLE IF NOT EXISTS world_macro_indicators (indicator TEXT, country TEXT, date TEXT, value REAL, source TEXT, PRIMARY KEY (indicator, country, date))""",
-            """CREATE TABLE IF NOT EXISTS estimate_snapshots (symbol TEXT, date TEXT, eps_current REAL, eps_next REAL, rev_current REAL, rev_next REAL, details TEXT, PRIMARY KEY (symbol, date))""",
+            """CREATE TABLE IF NOT EXISTS estimate_snapshots (symbol TEXT, date TEXT, eps_current REAL, eps_next REAL, rev_current REAL, rev_next REAL, details TEXT, eps_current_avg REAL, eps_current_high REAL, eps_current_low REAL, rev_current_avg REAL, num_analysts INTEGER, PRIMARY KEY (symbol, date))""",
             """CREATE TABLE IF NOT EXISTS estimate_momentum_signals (symbol TEXT, date TEXT, em_score REAL, revision_velocity REAL, surprise_momentum REAL, details TEXT, PRIMARY KEY (symbol, date))""",
             """CREATE TABLE IF NOT EXISTS regulatory_signals (symbol TEXT, date TEXT, reg_score REAL, event_count INTEGER, details TEXT, PRIMARY KEY (symbol, date))""",
             """CREATE TABLE IF NOT EXISTS regulatory_events (event_id TEXT, date TEXT, title TEXT, source TEXT, severity REAL, category TEXT, direction TEXT, jurisdiction TEXT, affected_symbols TEXT, details TEXT, PRIMARY KEY (event_id, date))""",

@@ -22,7 +22,20 @@ def _fmp_get(endpoint, params=None):
         return resp.json() if resp.status_code == 200 else None
     except Exception: return None
 
-def _safe_float(val): return val is not None and not (isinstance(val, float) and np.isnan(val))
+def _safe_float(val):
+    """Return True only if val can be losslessly converted to float (numeric, not NaN, not a string label)."""
+    if val is None:
+        return False
+    if isinstance(val, bool):
+        return False
+    if isinstance(val, (int, float)):
+        return not (isinstance(val, float) and np.isnan(val))
+    # Reject string values like "USD", "N/A", etc. that would crash float()
+    try:
+        float(val)
+        return True
+    except (ValueError, TypeError):
+        return False
 
 def _parse_df(df, key_map=None):
     result = {}
