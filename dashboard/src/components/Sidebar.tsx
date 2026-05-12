@@ -144,14 +144,34 @@ export default function Sidebar() {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
-  const [dateStr, setDateStr] = useState('');
+  const [pipelineRanAt, setPipelineRanAt] = useState('');
 
   useEffect(() => {
     const saved = localStorage.getItem('sidebar-collapsed');
     if (saved) setCollapsed(JSON.parse(saved));
     const savedGroups = localStorage.getItem('sidebar-groups');
     if (savedGroups) setCollapsedGroups(JSON.parse(savedGroups));
-    setDateStr(new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }));
+
+    // Fetch actual pipeline run time from pipeline_health
+    fetch('/api/pipeline-health?limit=1', { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { runs?: Array<{ created_at?: string; run_date?: string }> } | null) => {
+        const raw = d?.runs?.[0]?.created_at ?? d?.runs?.[0]?.run_date;
+        if (raw) {
+          // created_at is UTC datetime from SQLite; run_date is date-only
+          const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+          const dt = isDateOnly ? new Date(raw + 'T00:00:00') : new Date(raw.replace(' ', 'T') + 'Z');
+          if (!isNaN(dt.getTime())) {
+            const datePart = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            const timePart = isDateOnly ? '' : (' · ' + dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }));
+            setPipelineRanAt(datePart + timePart);
+            return;
+          }
+        }
+        // Fallback: no data yet
+        setPipelineRanAt('No data');
+      })
+      .catch(() => setPipelineRanAt('No data'));
   }, []);
 
   const toggleCollapse = () => {
@@ -282,7 +302,7 @@ export default function Sidebar() {
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
             <span className="text-[11px] text-slate-600 font-medium">Pipeline Active</span>
           </div>
-          <div className="text-[10px] text-slate-400 mt-1">{dateStr}</div>
+          <div className="text-[10px] text-slate-400 mt-1">{pipelineRanAt || '—'}</div>
         </div>
       )}
       {collapsed && (
