@@ -82,12 +82,15 @@ def run():
     upsert_many("stock_universe", ["symbol", "name", "sector", "industry", "market_cap", "asset_class"], rows)
 
     # Always keep crypto and commodities seeded — they don't come from S&P feeds
-    from tools.config import CRYPTO_TICKERS, COMMODITIES
+    from tools.config import CRYPTO_TICKERS, COMMODITIES, CUSTOM_TICKERS
     crypto_rows = [(sym, name, 'Crypto', 'Digital Assets', None, 'crypto') for sym, name in CRYPTO_TICKERS.items()]
     commodity_rows = [(sym, name, 'Commodities', 'Futures', None, 'commodity') for sym, name in COMMODITIES.items()]
-    upsert_many("stock_universe", ["symbol", "name", "sector", "industry", "market_cap", "asset_class"], crypto_rows + commodity_rows)
+    custom_rows = [(sym, info[0], info[1], info[2], None, 'stock') for sym, info in CUSTOM_TICKERS.items()]
+    upsert_many("stock_universe", ["symbol", "name", "sector", "industry", "market_cap", "asset_class"], crypto_rows + commodity_rows + custom_rows)
 
-    print(f"Stock universe saved: {len(rows)} stocks + {len(crypto_rows)} crypto + {len(commodity_rows)} commodities")
+    if custom_rows:
+        print(f"  Custom watchlist: {[r[0] for r in custom_rows]}")
+    print(f"Stock universe saved: {len(rows)} stocks + {len(crypto_rows)} crypto + {len(commodity_rows)} commodities + {len(custom_rows)} custom")
     return universe
 
 

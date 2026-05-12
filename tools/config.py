@@ -60,6 +60,15 @@ COMMODITIES = {
     "ZW=F": "Wheat",
     "ZC=F": "Corn",
 }
+# ---------------------------------------------------------------------------
+# Custom Watchlist — tickers outside S&P 500/400 to include in the pipeline
+# Format: { "TICKER": ("Company Name", "Sector", "Industry") }
+# These are seeded into stock_universe on every pipeline run and survive
+# universe refreshes. Add any ticker yfinance recognises.
+# ---------------------------------------------------------------------------
+CUSTOM_TICKERS: dict[str, tuple[str, str, str]] = {
+    # "PLTR": ("Palantir Technologies", "Technology", "Software—Infrastructure"),
+}
 VIX_TICKER = "^VIX"
 VIX3M_TICKER = "^VIX3M"
 PRICE_HISTORY_DAYS = 365
