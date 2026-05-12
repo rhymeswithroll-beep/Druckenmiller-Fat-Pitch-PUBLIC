@@ -67,7 +67,7 @@ COMMODITIES = {
 # universe refreshes. Add any ticker yfinance recognises.
 # ---------------------------------------------------------------------------
 CUSTOM_TICKERS: dict[str, tuple[str, str, str]] = {
-    # "PLTR": ("Palantir Technologies", "Technology", "Software—Infrastructure"),
+    "MRP": ("Millrose Properties, Inc.", "Real Estate", "REIT - Residential"),
 }
 VIX_TICKER = "^VIX"
 VIX3M_TICKER = "^VIX3M"
