@@ -77,7 +77,7 @@ function NewsTicker() {
           ref={tickerRef}
           className="flex items-center gap-0 whitespace-nowrap"
           style={{
-            animation: 'ticker-scroll 120s linear infinite',
+            animation: 'ticker-scroll 60s linear infinite',
           }}
         >
           {items.map((h, i) => {
