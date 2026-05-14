@@ -86,10 +86,14 @@ export default function CommandPalette() {
     const q = query.toLowerCase();
     const matched: SearchResult[] = [];
 
-    // Search stocks first (exact prefix match)
+    // Exact symbol match always goes first
+    const exact = stocks.filter(s => s.symbol?.toLowerCase() === q);
+    exact.forEach(s => matched.push(s));
+
+    // Then prefix matches (excluding exact)
     stocks
-      .filter(s => s.symbol?.toLowerCase().startsWith(q))
-      .slice(0, 6)
+      .filter(s => s.symbol?.toLowerCase() !== q && s.symbol?.toLowerCase().startsWith(q))
+      .slice(0, 6 - matched.length)
       .forEach(s => matched.push(s));
 
     // Then fuzzy stock matches
