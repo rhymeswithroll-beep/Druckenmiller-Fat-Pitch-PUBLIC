@@ -13,16 +13,22 @@ if ($listening) { exit 0 }
 
 Write-Log "API not on port 8000 - starting uvicorn..."
 
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName         = $VenvPython
-$psi.Arguments        = "-m uvicorn tools.api:app --port 8000 --host 0.0.0.0"
-$psi.WorkingDirectory = $ProjectDir
-$psi.WindowStyle      = [System.Diagnostics.ProcessWindowStyle]::Hidden
-$psi.UseShellExecute  = $true
+$ts    = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+$stamp = $ts -replace '[: ]', '_'
+$OutLog = "$ProjectDir\.tmp\uvicorn_${stamp}.out"
+$ErrLog = "$ProjectDir\.tmp\uvicorn_${stamp}.err"
 
+# -u = unbuffered Python I/O so crash tracebacks flush to files immediately
 try {
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    Write-Log "uvicorn started."
+    $proc = Start-Process `
+        -FilePath $VenvPython `
+        -ArgumentList "-u -m uvicorn tools.api:app --port 8000 --host 0.0.0.0 --log-level info" `
+        -WorkingDirectory $ProjectDir `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $OutLog `
+        -RedirectStandardError  $ErrLog `
+        -PassThru
+    Write-Log "uvicorn started (PID $($proc.Id)) err=$ErrLog"
 } catch {
-    Write-Log "ERROR starting uvicorn."
+    Write-Log "ERROR starting uvicorn: $_"
 }

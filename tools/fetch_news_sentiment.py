@@ -94,12 +94,31 @@ def fetch_news_sentiment(client, symbols):
     return rows
 
 
+def _call_with_timeout(fn, timeout=8):
+    """Run fn() in a daemon thread with a hard timeout. Returns None on timeout/error.
+
+    Note: ThreadPoolExecutor.shutdown(wait=True) would re-block on the hung thread,
+    defeating the timeout. We use wait=False so the executor exits immediately and
+    the daemon thread is abandoned (GC'd) rather than joined.
+    """
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _TE
+    ex = ThreadPoolExecutor(max_workers=1)
+    try:
+        fut = ex.submit(fn)
+        try:
+            return fut.result(timeout=timeout)
+        except (_TE, Exception):
+            return None
+    finally:
+        ex.shutdown(wait=False)  # don't block waiting for hung thread
+
+
 def fetch_analyst_recommendations(client, symbols):
     """Fetch analyst recommendation trends (strong buy/buy/hold/sell counts)."""
     rows = []
     for symbol in symbols:
         try:
-            recs = client.recommendation_trends(symbol)
+            recs = _call_with_timeout(lambda s=symbol: client.recommendation_trends(s))
             if not recs:
                 continue
 

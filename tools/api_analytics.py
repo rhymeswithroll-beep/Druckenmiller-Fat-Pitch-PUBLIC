@@ -354,13 +354,16 @@ def performance_weight_history(regime: str = "all"):
 @router.get("/api/health")
 def health():
     """System health check."""
-    tables = query("SELECT name FROM sqlite_master WHERE type='table'")
-    latest = query("SELECT MAX(date) as d FROM convergence_signals")
-    return {
-        "status": "ok",
-        "tables": len(tables),
-        "latest_data": latest[0]["d"] if latest else None,
-    }
+    try:
+        latest = query("SELECT MAX(date) as d FROM convergence_signals")
+        sig_count = query("SELECT COUNT(*) as n FROM signals")
+        return {
+            "status": "ok",
+            "signal_count": sig_count[0]["n"] if sig_count else 0,
+            "latest_data": latest[0]["d"] if latest else None,
+        }
+    except Exception as e:
+        return {"status": "degraded", "error": str(e)}
 
 
 @router.get("/api/pipeline-health")
