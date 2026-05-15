@@ -32,7 +32,7 @@ export function HomeActionTable({ actionStocks, expandedAction, setExpandedActio
                 <th className="text-left py-3 px-4 font-normal">Symbol</th>
                 <th className="text-center py-3 px-2 font-normal">Signal</th>
                 <th className="text-right py-3 px-2 font-normal">Composite</th>
-                <th className="text-right py-3 px-2 font-normal">Conv.</th>
+                <th className="text-right py-3 px-2 font-normal">Cvg.</th>
                 <th className="text-center py-3 px-2 font-normal w-[200px]">Modules</th>
                 <th className="text-center py-3 px-2 font-normal w-[140px]">Trade Setup</th>
                 <th className="text-right py-3 px-4 font-normal">Size</th>

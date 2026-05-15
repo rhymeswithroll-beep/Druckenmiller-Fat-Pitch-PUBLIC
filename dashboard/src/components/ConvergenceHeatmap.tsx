@@ -114,7 +114,7 @@ export default function ConvergenceHeatmap({ data }: Props) {
                 >
                   Score {sortBy === 'convergence_score' ? '↓' : ''}
                 </th>
-                <th className="text-center py-3 px-2 font-normal w-20">Conv.</th>
+                <th className="text-center py-3 px-2 font-normal w-20">Level</th>
                 <th
                   className="text-right py-3 px-2 font-normal cursor-pointer hover:text-emerald-600 transition-colors w-12"
                   onClick={() => setSortBy('module_count')}
