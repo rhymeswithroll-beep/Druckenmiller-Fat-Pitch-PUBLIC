@@ -32,11 +32,31 @@ export default function ScreenerTab() {
           </div>
         ))}
       </div>
-      <div className="flex gap-4 items-center">
-        <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="bg-white border border-gray-200 text-gray-700 text-[10px] tracking-wider px-3 py-1.5 rounded-lg">
-          <option value="composite_score">COMPOSITE</option><option value="technical_score">TECHNICAL</option><option value="rr_ratio">R:R</option>
-        </select>
-        <span className="text-[10px] text-gray-500">{filtered.length} assets</span>
+      <div className="flex gap-4 items-center justify-between">
+        <div className="flex gap-4 items-center">
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="bg-white border border-gray-200 text-gray-700 text-[10px] tracking-wider px-3 py-1.5 rounded-lg">
+            <option value="composite_score">COMPOSITE</option><option value="technical_score">TECHNICAL</option><option value="rr_ratio">R:R</option>
+          </select>
+          <span className="text-[10px] text-gray-500">{filtered.length} assets</span>
+        </div>
+        <button
+          onClick={() => {
+            const cols = ['symbol','signal','composite_score','technical_score','entry_price','rr_ratio'];
+            const header = cols.join(',');
+            const rows = filtered.map(s => cols.map(c => {
+              const v = (s as Record<string, unknown>)[c];
+              return v == null ? '' : String(v);
+            }).join(','));
+            const csv = [header, ...rows].join('\n');
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+            a.download = `screener_${new Date().toISOString().slice(0,10)}.csv`;
+            a.click();
+          }}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-semibold tracking-wider text-emerald-600 border border-emerald-600/30 rounded-lg hover:bg-emerald-600/5 transition-colors"
+        >
+          ↓ Export CSV
+        </button>
       </div>
       <div className="panel overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-[11px]"><thead><tr className="border-b border-gray-200 text-gray-500 tracking-widest uppercase"><th className="text-left py-3 px-4 font-normal">Symbol</th><th className="text-center py-3 px-2 font-normal">Signal</th><th className="text-right py-3 px-2 font-normal">Composite</th><th className="text-right py-3 px-2 font-normal">Technical</th><th className="text-right py-3 px-2 font-normal">Entry</th><th className="text-right py-3 px-2 font-normal">R:R</th></tr></thead>
         <tbody>{filtered.slice(0, 100).map(s => (
