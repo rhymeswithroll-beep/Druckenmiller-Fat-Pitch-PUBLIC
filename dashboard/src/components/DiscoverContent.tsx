@@ -113,10 +113,31 @@ export default function DiscoverContent() {
           <span className="text-[10px] text-gray-500 tracking-widest opacity-50">SECURITIES</span>
           {(selectedSector || selectedConviction || showFatPitchesOnly || minScore > 0) && <button onClick={clearAll} className="text-[10px] text-gray-500 tracking-wider hover:text-emerald-600 px-2 py-0.5 border border-gray-200 rounded-lg">CLEAR</button>}
         </div>
-        <div className="flex items-center gap-1.5"><span className="text-[8px] text-gray-500 tracking-widest opacity-40 mr-1">SORT</span>
-          <Chip label="Score" active={sortKey === 'score'} onClick={() => setSortKey('score')} />
-          <Chip label="Modules" active={sortKey === 'modules'} onClick={() => setSortKey('modules')} />
-          <Chip label="A-Z" active={sortKey === 'name'} onClick={() => setSortKey('name')} />
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5"><span className="text-[8px] text-gray-500 tracking-widest opacity-40 mr-1">SORT</span>
+            <Chip label="Score" active={sortKey === 'score'} onClick={() => setSortKey('score')} />
+            <Chip label="Modules" active={sortKey === 'modules'} onClick={() => setSortKey('modules')} />
+            <Chip label="A-Z" active={sortKey === 'name'} onClick={() => setSortKey('name')} />
+          </div>
+          <button
+            onClick={() => {
+              const cols = ['symbol','company_name','sector','industry','convergence_score','conviction_level','module_count','is_fat_pitch','active_modules'];
+              const header = cols.join(',');
+              const rows = filtered.map(s => cols.map(c => {
+                const v = (s as Record<string, unknown>)[c];
+                const str = v == null ? '' : String(v);
+                return str.includes(',') || str.includes('"') ? `"${str.replace(/"/g,'""')}"` : str;
+              }).join(','));
+              const csv = [header, ...rows].join('\n');
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+              a.download = `discover_${new Date().toISOString().slice(0,10)}.csv`;
+              a.click();
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-semibold tracking-wider text-emerald-600 border border-emerald-600/30 rounded-lg hover:bg-emerald-600/5 transition-colors"
+          >
+            ↓ Export CSV
+          </button>
         </div>
       </div>
       {filtered.length === 0 ? <div className="text-center py-20 text-gray-400 text-sm">No securities match the current filter criteria. <button onClick={clearAll} className="text-emerald-600 text-[11px] ml-2 hover:underline">Reset Filters</button></div> : (
